@@ -1,1 +1,1 @@
-# rapidDFIR
+# fastDFIR
