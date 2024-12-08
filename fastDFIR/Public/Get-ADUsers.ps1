@@ -31,7 +31,7 @@ function Get-ADUsers {
             Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
         }
         
-        $users = Process-ADObjects -ObjectType "Users" -Objects $allUsers -ProcessingScript {
+        $users = Get-ADObjects -ObjectType "Users" -Objects $allUsers -ProcessingScript {
             param($user)
             $user | Select-Object $properties
         }

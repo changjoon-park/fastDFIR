@@ -1,4 +1,4 @@
-function Process-ADObjects {
+function Get-ADObjects {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
