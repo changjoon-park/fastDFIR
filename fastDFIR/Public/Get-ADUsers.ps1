@@ -8,7 +8,6 @@ function Get-ADUsers {
     
     try {
         Write-Log "Retrieving user accounts..." -Level Info
-        # Make sure to provide both Activity and Status here
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing user retrieval..."
         
         $filter = if ($IncludeDisabled) { "*" } else { "Enabled -eq 'True'" }
@@ -22,11 +21,10 @@ function Get-ADUsers {
             'PasswordLastSet',
             'PasswordNeverExpires',
             'PasswordExpired',
-            'AccountExpirationDate'
+            'AccountExpirationDate',
+            'DistinguishedName'  # Added for OU tracking
         )
         
-        # Make sure to provide both Activity and Status here
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Getting users..."
         $allUsers = Invoke-WithRetry -ScriptBlock {
             Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
         }
@@ -36,9 +34,18 @@ function Get-ADUsers {
             $user | Select-Object $properties
         }
         
+        # Generate and display statistics
+        $stats = Get-CollectionStatistics -Data $users -ObjectType "Users"
+        Write-Host "`n=== User Collection Statistics ==="
+        Write-Host "Total Users: $($stats.TotalCount)"
+        Write-Host "Enabled Users: $(($users | Where-Object { $_.Enabled }).Count)"
+        Write-Host "Disabled Users: $(($users | Where-Object { -not $_.Enabled }).Count)"
+        Write-Host "`nDistribution by OU:"
+        $stats.OUDistribution.GetEnumerator() | Sort-Object Name | ForEach-Object {
+            Write-Host ("{0,-50} : {1,5}" -f $_.Key, $_.Value)
+        }
+        
         if ($Export) {
-            # Make sure to provide both Activity and Status here
-            Show-ProgressHelper -Activity "AD Inventory" -Status "Exporting user data..."
             if (-not (Test-Path $ExportPath)) {
                 New-Item -ItemType Directory -Path $ExportPath -Force
             }
@@ -49,11 +56,6 @@ function Get-ADUsers {
         
         Show-ProgressHelper -Activity "AD Inventory" -Status "User retrieval complete" -Completed
         return $users
-        
-    }
-    catch [Microsoft.ActiveDirectory.Management.ADServerDownException] {
-        Write-Log "Domain controller is not accessible" -Level Error
-        Show-ErrorBox "Domain controller is not accessible. Please check network connectivity."
     }
     catch {
         Write-Log "Error retrieving users: $($_.Exception.Message)" -Level Error

@@ -21,8 +21,6 @@ function Get-ADComputers {
             'DNSHostName'
         )
         
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Getting computers..."
-        
         $allComputers = Invoke-WithRetry -ScriptBlock {
             Get-ADComputer -Filter * -Properties $properties -ErrorAction Stop
         }
@@ -32,8 +30,16 @@ function Get-ADComputers {
             $computer | Select-Object $properties
         }
         
+        # Generate and display statistics
+        $stats = Get-CollectionStatistics -Data $computers -ObjectType "Computers"
+        Write-Host "`n=== Computer Collection Statistics ==="
+        Write-Host "Total Computers: $($stats.TotalCount)"
+        Write-Host "`nDistribution by OU:"
+        $stats.OUDistribution.GetEnumerator() | Sort-Object Name | ForEach-Object {
+            Write-Host ("{0,-50} : {1,5}" -f $_.Key, $_.Value)
+        }
+        
         if ($Export) {
-            Show-ProgressHelper -Activity "AD Inventory" -Status "Exporting computer data..."
             if (-not (Test-Path $ExportPath)) {
                 New-Item -ItemType Directory -Path $ExportPath -Force
             }
@@ -44,7 +50,6 @@ function Get-ADComputers {
         
         Show-ProgressHelper -Activity "AD Inventory" -Status "Computer retrieval complete" -Completed
         return $computers
-        
     }
     catch {
         Write-Log "Error retrieving computers: $($_.Exception.Message)" -Level Error
