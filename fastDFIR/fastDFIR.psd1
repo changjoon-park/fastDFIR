@@ -12,7 +12,7 @@
     RootModule        = 'fastDFIR.psm1'
 
     # Version number of this module.
-    ModuleVersion     = '1.1.8'
+    ModuleVersion     = '1.1.10'
 
     # Supported PSEditions
     # CompatiblePSEditions = @()
@@ -73,8 +73,6 @@
         'Get-ADComputers',
         'Get-ADGroupsAndMembers', 
         'Get-ADUsers',
-        'Get-DomainInfo',
-        'Get-ForestInfo',
         'Get-DomainInventory',
         'Get-ForestInventory'
     )

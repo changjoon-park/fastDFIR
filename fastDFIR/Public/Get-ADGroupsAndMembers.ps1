@@ -71,7 +71,7 @@ function Get-ADGroupsAndMembers {
         $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
 
-        # Export data if requested
+        # Export data 
         Export-ADData -ObjectType $ObjectType -Data $groupObjects -ExportPath $ExportPath
         
         # Complete progress

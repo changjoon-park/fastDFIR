@@ -21,8 +21,7 @@ function Get-ADUsers {
             'PasswordLastSet',
             'PasswordNeverExpires',
             'PasswordExpired',
-            'DistinguishedName',
-            'MemberOf'  # Getting group memberships
+            'DistinguishedName'
         )
         
         $allUsers = Invoke-WithRetry -ScriptBlock {
@@ -33,24 +32,6 @@ function Get-ADUsers {
             param($user)
             
             try {
-                $groupMemberships = @($user.MemberOf | ForEach-Object {
-                        try {
-                            $groupDN = $_
-                            $group = Get-ADGroup $groupDN -Properties Name -ErrorAction SilentlyContinue
-                            if ($group) {
-                                $group.Name
-                            }
-                            else {
-                                Write-Log "Group not found: $groupDN" -Level Warning
-                                "Unknown Group ($($groupDN.Split(',')[0]))"
-                            }
-                        }
-                        catch {
-                            Write-Log "Error resolving group $groupDN : $($_.Exception.Message)" -Level Warning
-                            "Unresolved Group ($($groupDN.Split(',')[0]))"
-                        }
-                    })
-                
                 [PSCustomObject]@{
                     SamAccountName       = $user.SamAccountName
                     DisplayName          = $user.DisplayName
@@ -60,8 +41,6 @@ function Get-ADUsers {
                     PasswordLastSet      = $user.PasswordLastSet
                     PasswordNeverExpires = $user.PasswordNeverExpires
                     PasswordExpired      = $user.PasswordExpired
-                    GroupMemberships     = $groupMemberships
-                    GroupCount           = $groupMemberships.Count
                     DistinguishedName    = $user.DistinguishedName
                     AccessStatus         = "Success"
                 }
@@ -78,8 +57,6 @@ function Get-ADUsers {
                     PasswordLastSet      = $null
                     PasswordNeverExpires = $null
                     PasswordExpired      = $null
-                    GroupMemberships     = @()
-                    GroupCount           = 0
                     DistinguishedName    = $null
                     AccessStatus         = "Access Error: $($_.Exception.Message)"
                 }
@@ -90,8 +67,8 @@ function Get-ADUsers {
         $stats = Get-CollectionStatistics -Data $users -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
         
-        # Export data if requested
-        Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath
+        # Export data 
+        Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath 
         
         # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "User retrieval complete" -Completed

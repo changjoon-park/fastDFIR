@@ -28,16 +28,6 @@ function Get-DomainInventory {
         $totalSteps = 3
         $currentStep = 0
         
-        # Get Forest and Domain Info
-        Show-ProgressHelper -Activity "AD Inventory" `
-            -Status "Getting Forest and Domain Info" `
-            -PercentComplete (($currentStep / $totalSteps) * 100)
-        
-        Invoke-WithRetry -ScriptBlock {
-            $forest = Get-ForestInfo
-            $domain = Get-DomainInfo
-        }
-        
         $currentStep++
         
         # Run selected components
@@ -46,7 +36,7 @@ function Get-DomainInventory {
                 -Status "Processing Users" `
                 -PercentComplete (($currentStep / $totalSteps) * 100)
             
-            Get-ADUsers -Export -ExportPath $ExportPath | Out-Null
+            Get-ADUsers -ExportPath $ExportPath | Out-Null
             $currentStep++
         }
         
@@ -55,7 +45,7 @@ function Get-DomainInventory {
                 -Status "Processing Computers" `
                 -PercentComplete (($currentStep / $totalSteps) * 100)
             
-            Get-ADComputers -Export -ExportPath $ExportPath | Out-Null
+            Get-ADComputers -ExportPath $ExportPath | Out-Null
             $currentStep++
         }
         
@@ -64,7 +54,7 @@ function Get-DomainInventory {
                 -Status "Processing Groups" `
                 -PercentComplete (($currentStep / $totalSteps) * 100)
             
-            Get-ADGroupsAndMembers -Export -ExportPath $ExportPath | Out-Null
+            Get-ADGroupsAndMembers -ExportPath $ExportPath | Out-Null
             $currentStep++
         }
         

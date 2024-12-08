@@ -274,6 +274,7 @@ function Write-Log {
 function Get-ADComputers {
     [CmdletBinding()]
     param(
+        [string]$ObjectType = "Computers",
         [switch]$Export,
         [string]$ExportPath = $script:Config.ExportPath
     )
@@ -298,24 +299,49 @@ function Get-ADComputers {
             Get-ADComputer -Filter * -Properties $properties -ErrorAction Stop
         }
         
-        $computers = Get-ADObjects -ObjectType "Computers" -Objects $allComputers -ProcessingScript {
+        $computers = Get-ADObjects -ObjectType $ObjectType -Objects $allComputers -ProcessingScript {
             param($computer)
-            $computer | Select-Object $properties
+            
+            try {
+                [PSCustomObject]@{
+                    Name                   = $computer.Name
+                    OperatingSystem        = $computer.OperatingSystem
+                    OperatingSystemVersion = $computer.OperatingSystemVersion
+                    Enabled                = $computer.Enabled
+                    LastLogonDate          = $computer.LastLogonDate
+                    Created                = $computer.Created
+                    Modified               = $computer.Modified
+                    DNSHostName            = $computer.DNSHostName
+                    DistinguishedName      = $computer.DistinguishedName
+                    AccessStatus           = "Success"
+                }
+            }
+            catch {
+                Write-Log "Error processing computer $($computer.Name): $($_.Exception.Message)" -Level Warning
+                
+                [PSCustomObject]@{
+                    Name                   = $computer.Name
+                    OperatingSystem        = $null
+                    OperatingSystemVersion = $null
+                    Enabled                = $null
+                    LastLogonDate          = $null
+                    Created                = $null
+                    Modified               = $null
+                    DNSHostName            = $null
+                    DistinguishedName      = $computer.DistinguishedName
+                    AccessStatus           = "Access Error: $($_.Exception.Message)"
+                }
+            }
         }
         
         # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $computers -ObjectType "Groups" -IncludeAccessStatus
+        $stats = Get-CollectionStatistics -Data $computers -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
         
-        if ($Export) {
-            if (-not (Test-Path $ExportPath)) {
-                New-Item -ItemType Directory -Path $ExportPath -Force
-            }
-            $exportFile = Join-Path $ExportPath "Computers_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
-            $computers | Export-Csv $exportFile -NoTypeInformation
-            Write-Log "Computers exported to $exportFile" -Level Info
-        }
+        # Export data if requested
+        Export-ADData -ObjectType $ObjectType -Data $computers -ExportPath $ExportPath -Export:$Export
         
+        # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "Computer retrieval complete" -Completed
         return $computers
     }
@@ -325,10 +351,10 @@ function Get-ADComputers {
     }
 }
 
-
 function Get-ADGroupsAndMembers {
     [CmdletBinding()]
     param(
+        [string]$ObjectType = "Groups",
         [switch]$Export,
         [string]$ExportPath = $script:Config.ExportPath
     )
@@ -337,33 +363,34 @@ function Get-ADGroupsAndMembers {
         Write-Log "Retrieving groups and members..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing group retrieval..."
         
-        # First get all groups with basic properties in one quick query
+        # Retrieve all groups and their members in one go
+        # Include the 'Members' property so we can count directly without extra queries
+
+        $properties = @(
+            'Name',
+            'Description',
+            'Created',
+            'Modified',
+            'memberOf',
+            'GroupCategory',
+            'GroupScope',
+            'Members',
+            'DistinguishedName'
+        )
+
         $groups = Invoke-WithRetry -ScriptBlock {
-            Get-ADGroup -Filter * -Properties Name, Description, Created, Modified, DistinguishedName, 
-            memberOf, GroupCategory, GroupScope -ErrorAction Stop
+            Get-ADGroup -Filter * -Properties $properties -ErrorAction Stop
         }
         
         $totalGroups = ($groups | Measure-Object).Count
         Write-Log "Found $totalGroups groups to process" -Level Info
         
-        $groupObjects = Get-ADObjects -ObjectType "Groups" -Objects $groups -ProcessingScript {
+        $groupObjects = Get-ADObjects -ObjectType $ObjectType -Objects $groups -ProcessingScript {
             param($group)
             
             try {
-                # Fast member count retrieval with timeout protection
-                $memberCount = 0
-                $members = "Not retrieved due to timeout"
-                
-                $memberJob = Start-Job -ScriptBlock {
-                    param($groupDN)
-                    (Get-ADGroup $groupDN -Properties Members).Members.Count
-                } -ArgumentList $group.DistinguishedName
-                
-                # Only wait 5 seconds max for member count
-                if (Wait-Job $memberJob -Timeout 5) {
-                    $memberCount = Receive-Job $memberJob
-                }
-                Remove-Job $memberJob -Force -ErrorAction SilentlyContinue
+                # Since we already have the Members property, just count it
+                $memberCount = if ($group.Members) { $group.Members.Count } else { 0 }
                 
                 [PSCustomObject]@{
                     Name              = $group.Name
@@ -395,18 +422,13 @@ function Get-ADGroupsAndMembers {
         }
         
         # Generate and display statistics using Get-CollectionStatistics
-        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType "Groups" -IncludeAccessStatus
+        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
+
+        # Export data if requested
+        Export-ADData -ObjectType $ObjectType -Data $groupObjects -ExportPath $ExportPath -Export:$Export
         
-        if ($Export) {
-            if (-not (Test-Path $ExportPath)) {
-                New-Item -ItemType Directory -Path $ExportPath -Force
-            }
-            $exportFile = Join-Path $ExportPath "Groups_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
-            $groupObjects | Export-Csv $exportFile -NoTypeInformation
-            Write-Log "Groups exported to $exportFile" -Level Info
-        }
-        
+        # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "Group retrieval complete" -Completed
         return $groupObjects
         
@@ -421,6 +443,7 @@ function Get-ADGroupsAndMembers {
 function Get-ADUsers {
     [CmdletBinding()]
     param(
+        [string]$ObjectType = "Users",
         [switch]$Export,
         [string]$ExportPath = $script:Config.ExportPath,
         [switch]$IncludeDisabled
@@ -441,32 +464,79 @@ function Get-ADUsers {
             'PasswordLastSet',
             'PasswordNeverExpires',
             'PasswordExpired',
-            'AccountExpirationDate',
-            'DistinguishedName'  # Added for OU tracking
+            'DistinguishedName',
+            'MemberOf'  # Added MemberOf property
         )
         
         $allUsers = Invoke-WithRetry -ScriptBlock {
             Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
         }
         
-        $users = Get-ADObjects -ObjectType "Users" -Objects $allUsers -ProcessingScript {
+        $users = Get-ADObjects -ObjectType $ObjectType -Objects $allUsers -ProcessingScript {
             param($user)
-            $user | Select-Object $properties
-        }
+            
+            try {
+                $groupMemberships = @($user.MemberOf | ForEach-Object {
+                        try {
+                            $groupDN = $_
+                            $group = Get-ADGroup $groupDN -Properties Name -ErrorAction SilentlyContinue
+                            if ($group) {
+                                $group.Name
+                            }
+                            else {
+                                Write-Log "Group not found: $groupDN" -Level Warning
+                                "Unknown Group ($($groupDN.Split(',')[0]))"  # Returns just the CN part of the DN
+                            }
+                        }
+                        catch {
+                            Write-Log "Error resolving group $groupDN : $($_.Exception.Message)" -Level Warning
+                            "Unresolved Group ($($groupDN.Split(',')[0]))"  # Returns just the CN part of the DN
+                        }
+                    })
 
+                [PSCustomObject]@{
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $user.DisplayName
+                    EmailAddress         = $user.EmailAddress
+                    Enabled              = $user.Enabled
+                    LastLogonDate        = $user.LastLogonDate
+                    PasswordLastSet      = $user.PasswordLastSet
+                    PasswordNeverExpires = $user.PasswordNeverExpires
+                    PasswordExpired      = $user.PasswordExpired
+                    GroupMemberships     = $groupMemberships  # Added group memberships
+                    GroupCount           = $groupMemberships.Count  # Added count of groups
+                    DistinguishedName    = $user.DistinguishedName
+                    AccessStatus         = "Success"
+                }
+            }
+            catch {
+                Write-Log "Error processing user $($user.SamAccountName): $($_.Exception.Message)" -Level Warning
+                
+                [PSCustomObject]@{
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $null
+                    EmailAddress         = $null
+                    Enabled              = $null
+                    LastLogonDate        = $null
+                    PasswordLastSet      = $null
+                    PasswordNeverExpires = $null
+                    PasswordExpired      = $null
+                    GroupMemberships     = @()  # Empty array for failed processing
+                    GroupCount           = 0    # Zero for failed processing
+                    DistinguishedName    = $null
+                    AccessStatus         = "Access Error: $($_.Exception.Message)"
+                }
+            }
+        }
+        
         # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $users -ObjectType "Groups" -IncludeAccessStatus
+        $stats = Get-CollectionStatistics -Data $users -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
         
-        if ($Export) {
-            if (-not (Test-Path $ExportPath)) {
-                New-Item -ItemType Directory -Path $ExportPath -Force
-            }
-            $exportFile = Join-Path $ExportPath "Users_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
-            $users | Export-Csv $exportFile -NoTypeInformation
-            Write-Log "Users exported to $exportFile" -Level Info
-        }
+        # Export data if requested
+        Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath -Export:$Export
         
+        # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "User retrieval complete" -Completed
         return $users
     }

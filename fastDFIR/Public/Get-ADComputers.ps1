@@ -64,7 +64,7 @@ function Get-ADComputers {
         $stats = Get-CollectionStatistics -Data $computers -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
         
-        # Export data if requested
+        # Export data 
         Export-ADData -ObjectType $ObjectType -Data $computers -ExportPath $ExportPath
         
         # Complete progress
