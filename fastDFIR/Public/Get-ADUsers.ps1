@@ -33,17 +33,10 @@ function Get-ADUsers {
             param($user)
             $user | Select-Object $properties
         }
-        
+
         # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $users -ObjectType "Users"
-        Write-Host "`n=== User Collection Statistics ==="
-        Write-Host "Total Users: $($stats.TotalCount)"
-        Write-Host "Enabled Users: $(($users | Where-Object { $_.Enabled }).Count)"
-        Write-Host "Disabled Users: $(($users | Where-Object { -not $_.Enabled }).Count)"
-        Write-Host "`nDistribution by OU:"
-        $stats.OUDistribution.GetEnumerator() | Sort-Object Name | ForEach-Object {
-            Write-Host ("{0,-50} : {1,5}" -f $_.Key, $_.Value)
-        }
+        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType "Groups" -IncludeAccessStatus
+        $stats.DisplayStatistics()
         
         if ($Export) {
             if (-not (Test-Path $ExportPath)) {

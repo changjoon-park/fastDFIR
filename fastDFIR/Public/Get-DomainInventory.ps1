@@ -43,7 +43,7 @@ function Get-DomainInventory {
                 -Status "Processing Users" `
                 -PercentComplete (($currentStep / $totalSteps) * 100)
             
-            Get-ADUsers -Export -ExportPath $ExportPath
+            Get-ADUsers -Export -ExportPath $ExportPath | Out-Null
             $currentStep++
         }
         
@@ -52,7 +52,7 @@ function Get-DomainInventory {
                 -Status "Processing Computers" `
                 -PercentComplete (($currentStep / $totalSteps) * 100)
             
-            Get-ADComputers -Export -ExportPath $ExportPath
+            Get-ADComputers -Export -ExportPath $ExportPath | Out-Null
             $currentStep++
         }
         
@@ -61,7 +61,7 @@ function Get-DomainInventory {
                 -Status "Processing Groups" `
                 -PercentComplete (($currentStep / $totalSteps) * 100)
             
-            Get-ADGroupsAndMembers -Export -ExportPath $ExportPath
+            Get-ADGroupsAndMembers -Export -ExportPath $ExportPath | Out-Null
             $currentStep++
         }
         

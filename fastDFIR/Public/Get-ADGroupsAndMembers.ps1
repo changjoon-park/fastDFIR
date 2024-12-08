@@ -2,120 +2,75 @@ function Get-ADGroupsAndMembers {
     [CmdletBinding()]
     param(
         [switch]$Export,
-        [string]$ExportPath = $script:Config.ExportPath,
-        [string]$DomainController = $env:LOGONSERVER.TrimStart("\\")  # Get current logged-on DC
+        [string]$ExportPath = $script:Config.ExportPath
     )
     
     try {
-        Write-Log "Retrieving groups and members from $DomainController..." -Level Info
+        Write-Log "Retrieving groups and members..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing group retrieval..."
         
-        # Get the current user's domain
-        $currentDomain = $env:USERDOMAIN
-        Write-Log "Current domain: $currentDomain" -Level Info
-        
-        # Parameters for AD cmdlets
-        $adParams = @{
-            Server      = $DomainController
-            ErrorAction = 'Stop'
-        }
-        
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Getting groups..."
-        
-        # Get groups with basic properties first
+        # First get all groups with basic properties in one quick query
         $groups = Invoke-WithRetry -ScriptBlock {
-            Get-ADGroup @adParams -Filter * -Properties Description, Created, Modified, DistinguishedName
+            Get-ADGroup -Filter * -Properties Name, Description, Created, Modified, DistinguishedName, 
+            memberOf, GroupCategory, GroupScope -ErrorAction Stop
         }
         
-        $groupObjects = @()
         $totalGroups = ($groups | Measure-Object).Count
-        $currentGroup = 0
+        Write-Log "Found $totalGroups groups to process" -Level Info
         
-        foreach ($group in $groups) {
-            $currentGroup++
-            $percentComplete = ($currentGroup / $totalGroups) * 100
-            
-            Show-ProgressHelper -Activity "AD Inventory" `
-                -Status "Processing group $currentGroup of $totalGroups" `
-                -CurrentOperation $group.Name `
-                -PercentComplete $percentComplete
+        $groupObjects = Get-ADObjects -ObjectType "Groups" -Objects $groups -ProcessingScript {
+            param($group)
             
             try {
-                # Get members with timeout protection
-                $members = @()
+                # Fast member count retrieval with timeout protection
                 $memberCount = 0
+                $members = "Not retrieved due to timeout"
                 
-                # Use a timeout mechanism for member retrieval
                 $memberJob = Start-Job -ScriptBlock {
-                    param($groupDN, $server)
-                    Get-ADGroup -Identity $groupDN -Properties Members -Server $server |
-                    Select-Object -ExpandProperty Members
-                } -ArgumentList $group.DistinguishedName, $DomainController
+                    param($groupDN)
+                    (Get-ADGroup $groupDN -Properties Members).Members.Count
+                } -ArgumentList $group.DistinguishedName
                 
-                # Wait up to 30 seconds for member retrieval
-                if (Wait-Job $memberJob -Timeout 30) {
-                    $memberDNs = Receive-Job $memberJob
-                    $memberCount = ($memberDNs | Measure-Object).Count
-                    
-                    # Only process first 100 members for large groups
-                    if ($memberCount -gt 100) {
-                        $memberDNs = $memberDNs | Select-Object -First 100
-                        Write-Log "Group $($group.Name) has more than 100 members. Only processing first 100." -Level Warning
-                    }
-                    
-                    foreach ($memberDN in $memberDNs) {
-                        try {
-                            $member = Get-ADObject $memberDN -Server $DomainController -Properties name, objectClass -ErrorAction Stop
-                            $members += "$($member.objectClass):$($member.name)"
-                        }
-                        catch {
-                            $members += "Inaccessible:$memberDN"
-                        }
-                    }
+                # Only wait 5 seconds max for member count
+                if (Wait-Job $memberJob -Timeout 5) {
+                    $memberCount = Receive-Job $memberJob
                 }
-                else {
-                    Write-Log "Timeout while retrieving members for group $($group.Name)" -Level Warning
-                    $members = @("Timeout occurred while retrieving members")
+                Remove-Job $memberJob -Force -ErrorAction SilentlyContinue
+                
+                [PSCustomObject]@{
+                    Name              = $group.Name
+                    Description       = $group.Description
+                    MemberCount       = $memberCount
+                    GroupCategory     = $group.GroupCategory
+                    GroupScope        = $group.GroupScope
+                    Created           = $group.Created
+                    Modified          = $group.Modified
+                    DistinguishedName = $group.DistinguishedName
+                    AccessStatus      = "Success"
                 }
-                
-                Remove-Job $memberJob -Force
-                
             }
             catch {
                 Write-Log "Error processing group $($group.Name): $($_.Exception.Message)" -Level Warning
-                $members = @("Error retrieving members")
-            }
-            
-            # Extract OU path
-            $ouPath = ($group.DistinguishedName -split ',(?=OU=)' | Where-Object { $_ -match '^OU=' }) -join ','
-            if (-not $ouPath) { $ouPath = "No OU (Root)" }
-            
-            $groupObjects += [PSCustomObject]@{
-                Name              = $group.Name
-                Description       = $group.Description
-                MemberCount       = $memberCount
-                Members           = ($members | Select-Object -First 100) -join "; "
-                Created           = $group.Created
-                Modified          = $group.Modified
-                DistinguishedName = $group.DistinguishedName
-                OUPath            = $ouPath
-                AccessStatus      = if ($members -contains "Error retrieving members") { "Partial Access" } else { "Full Access" }
+                
+                [PSCustomObject]@{
+                    Name              = $group.Name
+                    Description       = $group.Description
+                    MemberCount       = 0
+                    GroupCategory     = $group.GroupCategory
+                    GroupScope        = $group.GroupScope
+                    Created           = $group.Created
+                    Modified          = $group.Modified
+                    DistinguishedName = $group.DistinguishedName
+                    AccessStatus      = "Access Error: $($_.Exception.Message)"
+                }
             }
         }
         
-        # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType "Groups"
-        Write-Host "`n=== Group Collection Statistics ==="
-        Write-Host "Total Groups: $($stats.TotalCount)"
-        Write-Host "Accessible Groups: $(($groupObjects | Where-Object { $_.AccessStatus -eq 'Full Access' }).Count)"
-        Write-Host "Partially Accessible Groups: $(($groupObjects | Where-Object { $_.AccessStatus -eq 'Partial Access' }).Count)"
-        Write-Host "`nDistribution by OU:"
-        $stats.OUDistribution.GetEnumerator() | Sort-Object Name | ForEach-Object {
-            Write-Host ("{0,-50} : {1,5}" -f $_.Key, $_.Value)
-        }
+        # Generate and display statistics using Get-CollectionStatistics
+        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType "Groups" -IncludeAccessStatus
+        $stats.DisplayStatistics()
         
         if ($Export) {
-            Show-ProgressHelper -Activity "AD Inventory" -Status "Exporting group data..."
             if (-not (Test-Path $ExportPath)) {
                 New-Item -ItemType Directory -Path $ExportPath -Force
             }
@@ -130,6 +85,7 @@ function Get-ADGroupsAndMembers {
     }
     catch {
         Write-Log "Error retrieving groups: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve groups or group members. Check permissions."
+        Show-ErrorBox "Unable to retrieve groups. Check permissions."
+        return $null
     }
 }

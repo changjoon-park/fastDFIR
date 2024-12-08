@@ -31,13 +31,8 @@ function Get-ADComputers {
         }
         
         # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $computers -ObjectType "Computers"
-        Write-Host "`n=== Computer Collection Statistics ==="
-        Write-Host "Total Computers: $($stats.TotalCount)"
-        Write-Host "`nDistribution by OU:"
-        $stats.OUDistribution.GetEnumerator() | Sort-Object Name | ForEach-Object {
-            Write-Host ("{0,-50} : {1,5}" -f $_.Key, $_.Value)
-        }
+        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType "Groups" -IncludeAccessStatus
+        $stats.DisplayStatistics()
         
         if ($Export) {
             if (-not (Test-Path $ExportPath)) {
