@@ -1,8 +1,12 @@
 function Get-ADGroupsAndMembers {
     [CmdletBinding()]
     param(
+        [string]$ObjectType = "Groups",
         [switch]$Export,
-        [string]$ExportPath = $script:Config.ExportPath
+        [string]$ExportPath = $script:Config.ExportPath,
+        [Parameter()]
+        [ValidateSet("JSON", "CSV")]
+        [string]$ExportType = "JSON" # Default export type is JSON
     )
     
     try {
@@ -31,7 +35,7 @@ function Get-ADGroupsAndMembers {
         $totalGroups = ($groups | Measure-Object).Count
         Write-Log "Found $totalGroups groups to process" -Level Info
         
-        $groupObjects = Get-ADObjects -ObjectType "Groups" -Objects $groups -ProcessingScript {
+        $groupObjects = Get-ADObjects -ObjectType $ObjectType -Objects $groups -ProcessingScript {
             param($group)
             
             try {
@@ -68,11 +72,11 @@ function Get-ADGroupsAndMembers {
         }
         
         # Generate and display statistics using Get-CollectionStatistics
-        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType "Groups" -IncludeAccessStatus
+        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
 
         # Export data if requested
-        Export-ADData -ObjectType "Groups" -Data $groupObjects -ExportPath $ExportPath -Export:$Export
+        Export-ADData -ObjectType $ObjectType -Data $groupObjects -ExportPath $ExportPath -Export:$Export -ExportType $ExportType
         
         # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "Group retrieval complete" -Completed

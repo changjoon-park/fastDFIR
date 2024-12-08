@@ -1,9 +1,13 @@
 function Get-ADUsers {
     [CmdletBinding()]
     param(
+        [string]$ObjectType = "Users",
         [switch]$Export,
         [string]$ExportPath = $script:Config.ExportPath,
-        [switch]$IncludeDisabled
+        [switch]$IncludeDisabled,
+        [Parameter()]
+        [ValidateSet("JSON", "CSV")]
+        [string]$ExportType = "JSON" # Default export type is JSON
     )
     
     try {
@@ -29,17 +33,17 @@ function Get-ADUsers {
             Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
         }
         
-        $users = Get-ADObjects -ObjectType "Users" -Objects $allUsers -ProcessingScript {
+        $users = Get-ADObjects -ObjectType $ObjectType -Objects $allUsers -ProcessingScript {
             param($user)
             $user | Select-Object $properties
         }
 
         # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $users -ObjectType "Groups" -IncludeAccessStatus
+        $stats = Get-CollectionStatistics -Data $users -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
 
         # Export data if requested
-        Export-ADData -ObjectType "Users" -Data $users -ExportPath $ExportPath -Export:$Export
+        Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath -Export:$Export -ExportType $ExportType
         
         # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "User retrieval complete" -Completed

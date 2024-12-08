@@ -1,8 +1,12 @@
 function Get-ADComputers {
     [CmdletBinding()]
     param(
+        [string]$ObjectType = "Computers",
         [switch]$Export,
-        [string]$ExportPath = $script:Config.ExportPath
+        [string]$ExportPath = $script:Config.ExportPath,
+        [Parameter()]
+        [ValidateSet("JSON", "CSV")]
+        [string]$ExportType = "JSON" # Default export type is JSON
     )
     
     try {
@@ -25,17 +29,17 @@ function Get-ADComputers {
             Get-ADComputer -Filter * -Properties $properties -ErrorAction Stop
         }
         
-        $computers = Get-ADObjects -ObjectType "Computers" -Objects $allComputers -ProcessingScript {
+        $computers = Get-ADObjects -ObjectType $ObjectTypej -Objects $allComputers -ProcessingScript {
             param($computer)
             $computer | Select-Object $properties
         }
         
         # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $computers -ObjectType "Groups" -IncludeAccessStatus
+        $stats = Get-CollectionStatistics -Data $computers -ObjectType $ObjectTypej -IncludeAccessStatus
         $stats.DisplayStatistics()
 
         # Export data if requested
-        Export-ADData -ObjectType "Computers" -Data $computers -ExportPath $ExportPath -Export:$Export
+        Export-ADData -ObjectType $ObjectTypej -Data $computers -ExportPath $ExportPath -Export:$Export -ExportType $ExportType
 
         # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "Computer retrieval complete" -Completed

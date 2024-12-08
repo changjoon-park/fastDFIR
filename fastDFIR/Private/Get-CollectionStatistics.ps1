@@ -3,6 +3,8 @@ function Get-CollectionStatistics {
     param(
         [Parameter(Mandatory)]
         [object[]]$Data,
+        [Parameter(Mandatory)]
+        [ValidateSet('Users', 'Groups', 'Computers')]
         [string]$ObjectType,
         [switch]$IncludeAccessStatus
     )
