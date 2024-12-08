@@ -2,7 +2,6 @@ function Get-ADComputers {
     [CmdletBinding()]
     param(
         [string]$ObjectType = "Computers",
-        [switch]$Export,
         [string]$ExportPath = $script:Config.ExportPath
     )
     
@@ -66,7 +65,7 @@ function Get-ADComputers {
         $stats.DisplayStatistics()
         
         # Export data if requested
-        Export-ADData -ObjectType $ObjectType -Data $computers -ExportPath $ExportPath -Export:$Export
+        Export-ADData -ObjectType $ObjectType -Data $computers -ExportPath $ExportPath
         
         # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "Computer retrieval complete" -Completed

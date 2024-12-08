@@ -125,7 +125,6 @@ function Get-CollectionStatistics {
     return $stats
 }
 
-
 function Import-ADModule {
     [CmdletBinding()]
     param()

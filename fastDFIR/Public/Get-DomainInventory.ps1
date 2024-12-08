@@ -3,6 +3,9 @@ function Get-DomainInventory {
     param(
         [ValidateScript({ Test-Path $_ })]
         [string]$ExportPath = $script:Config.ExportPath,
+        [Parameter()]
+        [ValidateSet("JSON", "CSV")]
+        [string]$ExportType = "JSON", # Default export type is JSON
         [switch]$SkipUsers,
         [switch]$SkipComputers,
         [switch]$SkipGroups

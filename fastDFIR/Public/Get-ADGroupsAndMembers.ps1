@@ -2,7 +2,6 @@ function Get-ADGroupsAndMembers {
     [CmdletBinding()]
     param(
         [string]$ObjectType = "Groups",
-        [switch]$Export,
         [string]$ExportPath = $script:Config.ExportPath
     )
     
@@ -73,7 +72,7 @@ function Get-ADGroupsAndMembers {
         $stats.DisplayStatistics()
 
         # Export data if requested
-        Export-ADData -ObjectType $ObjectType -Data $groupObjects -ExportPath $ExportPath -Export:$Export
+        Export-ADData -ObjectType $ObjectType -Data $groupObjects -ExportPath $ExportPath
         
         # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "Group retrieval complete" -Completed
