@@ -2,19 +2,15 @@ function Export-ADData {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ObjectType, # e.g. "Users", "Groups", "Computers"
+        [string]$ObjectType,
         
         [Parameter(Mandatory = $true)]
-        [System.Collections.IEnumerable]$Data, # The collection of objects to export
+        [System.Collections.IEnumerable]$Data,
         
         [Parameter(Mandatory = $true)]
-        [string]$ExportPath, # The directory to store the file
+        [string]$ExportPath,
          
-        [switch]$Export, # Whether to actually perform the export
-
-        [Parameter()]
-        [ValidateSet("JSON", "CSV")]
-        [string]$ExportType = "JSON" # Default export type is JSON
+        [switch]$Export
     )
 
     if ($Export) {
@@ -23,18 +19,10 @@ function Export-ADData {
         }
 
         $timestamp = (Get-Date -Format 'yyyyMMdd_HHmmss')
+        $exportFile = Join-Path $ExportPath ("{0}_{1}.json" -f $ObjectType, $timestamp)
+        $fullPath = Convert-Path $exportFile
+        $Data | ConvertTo-Json -Depth 10 | Out-File $exportFile
 
-        switch ($ExportType) {
-            "CSV" {
-                $exportFile = Join-Path $ExportPath ("{0}_{1}.csv" -f $ObjectType, $timestamp)
-                $Data | Export-Csv $exportFile -NoTypeInformation
-            }
-            "JSON" {
-                $exportFile = Join-Path $ExportPath ("{0}_{1}.json" -f $ObjectType, $timestamp)
-                $Data | ConvertTo-Json -Depth 5 | Out-File $exportFile -Encoding UTF8
-            }
-        }
-
-        Write-Log "$ObjectType exported to $($exportFile.FullName) (Type: $ExportType)" -Level Info
+        Write-Log "$ObjectType exported to $fullPath" -Level Info
     }
 }

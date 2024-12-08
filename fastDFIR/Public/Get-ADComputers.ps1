@@ -3,10 +3,7 @@ function Get-ADComputers {
     param(
         [string]$ObjectType = "Computers",
         [switch]$Export,
-        [string]$ExportPath = $script:Config.ExportPath,
-        [Parameter()]
-        [ValidateSet("JSON", "CSV")]
-        [string]$ExportType = "JSON" # Default export type is JSON
+        [string]$ExportPath = $script:Config.ExportPath
     )
     
     try {
@@ -39,7 +36,7 @@ function Get-ADComputers {
         $stats.DisplayStatistics()
 
         # Export data if requested
-        Export-ADData -ObjectType $ObjectTypej -Data $computers -ExportPath $ExportPath -Export:$Export -ExportType $ExportType
+        Export-ADData -ObjectType $ObjectTypej -Data $computers -ExportPath $ExportPath -Export:$Export
 
         # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "Computer retrieval complete" -Completed

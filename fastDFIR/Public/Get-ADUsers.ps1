@@ -4,10 +4,7 @@ function Get-ADUsers {
         [string]$ObjectType = "Users",
         [switch]$Export,
         [string]$ExportPath = $script:Config.ExportPath,
-        [switch]$IncludeDisabled,
-        [Parameter()]
-        [ValidateSet("JSON", "CSV")]
-        [string]$ExportType = "JSON" # Default export type is JSON
+        [switch]$IncludeDisabled
     )
     
     try {
@@ -43,7 +40,7 @@ function Get-ADUsers {
         $stats.DisplayStatistics()
 
         # Export data if requested
-        Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath -Export:$Export -ExportType $ExportType
+        Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath -Export:$Export
         
         # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "User retrieval complete" -Completed

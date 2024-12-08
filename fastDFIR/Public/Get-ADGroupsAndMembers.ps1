@@ -3,10 +3,7 @@ function Get-ADGroupsAndMembers {
     param(
         [string]$ObjectType = "Groups",
         [switch]$Export,
-        [string]$ExportPath = $script:Config.ExportPath,
-        [Parameter()]
-        [ValidateSet("JSON", "CSV")]
-        [string]$ExportType = "JSON" # Default export type is JSON
+        [string]$ExportPath = $script:Config.ExportPath
     )
     
     try {
@@ -76,7 +73,7 @@ function Get-ADGroupsAndMembers {
         $stats.DisplayStatistics()
 
         # Export data if requested
-        Export-ADData -ObjectType $ObjectType -Data $groupObjects -ExportPath $ExportPath -Export:$Export -ExportType $ExportType
+        Export-ADData -ObjectType $ObjectType -Data $groupObjects -ExportPath $ExportPath -Export:$Export
         
         # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "Group retrieval complete" -Completed
