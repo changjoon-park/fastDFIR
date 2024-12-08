@@ -22,8 +22,7 @@ function Get-ADUsers {
             'PasswordLastSet',
             'PasswordNeverExpires',
             'PasswordExpired',
-            'AccountExpirationDate',
-            'DistinguishedName'  # Added for OU tracking
+            'DistinguishedName'
         )
         
         $allUsers = Invoke-WithRetry -ScriptBlock {
@@ -32,13 +31,43 @@ function Get-ADUsers {
         
         $users = Get-ADObjects -ObjectType $ObjectType -Objects $allUsers -ProcessingScript {
             param($user)
-            $user | Select-Object $properties
+            
+            try {
+                [PSCustomObject]@{
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $user.DisplayName
+                    EmailAddress         = $user.EmailAddress
+                    Enabled              = $user.Enabled
+                    LastLogonDate        = $user.LastLogonDate
+                    PasswordLastSet      = $user.PasswordLastSet
+                    PasswordNeverExpires = $user.PasswordNeverExpires
+                    PasswordExpired      = $user.PasswordExpired
+                    DistinguishedName    = $user.DistinguishedName
+                    AccessStatus         = "Success"
+                }
+            }
+            catch {
+                Write-Log "Error processing user $($user.SamAccountName): $($_.Exception.Message)" -Level Warning
+                
+                [PSCustomObject]@{
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $null
+                    EmailAddress         = $null
+                    Enabled              = $null
+                    LastLogonDate        = $null
+                    PasswordLastSet      = $null
+                    PasswordNeverExpires = $null
+                    PasswordExpired      = $null
+                    DistinguishedName    = $null
+                    AccessStatus         = "Access Error: $($_.Exception.Message)"
+                }
+            }
         }
-
+        
         # Generate and display statistics
         $stats = Get-CollectionStatistics -Data $users -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
-
+        
         # Export data if requested
         Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath -Export:$Export
         
