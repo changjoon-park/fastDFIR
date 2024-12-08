@@ -9,10 +9,23 @@ function Get-ADGroupsAndMembers {
         Write-Log "Retrieving groups and members..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing group retrieval..."
         
-        # First get all groups with basic properties in one quick query
+        # Retrieve all groups and their members in one go
+        # Include the 'Members' property so we can count directly without extra queries
+
+        $properties = @(
+            'Name',
+            'Description',
+            'Created',
+            'Modified',
+            'memberOf',
+            'GroupCategory',
+            'GroupScope',
+            'Members',
+            'DistinguishedName'
+        )
+
         $groups = Invoke-WithRetry -ScriptBlock {
-            Get-ADGroup -Filter * -Properties Name, Description, Created, Modified, DistinguishedName, 
-            memberOf, GroupCategory, GroupScope -ErrorAction Stop
+            Get-ADGroup -Filter * -Properties $properties -ErrorAction Stop
         }
         
         $totalGroups = ($groups | Measure-Object).Count
@@ -22,20 +35,8 @@ function Get-ADGroupsAndMembers {
             param($group)
             
             try {
-                # Fast member count retrieval with timeout protection
-                $memberCount = 0
-                $members = "Not retrieved due to timeout"
-                
-                $memberJob = Start-Job -ScriptBlock {
-                    param($groupDN)
-                    (Get-ADGroup $groupDN -Properties Members).Members.Count
-                } -ArgumentList $group.DistinguishedName
-                
-                # Only wait 5 seconds max for member count
-                if (Wait-Job $memberJob -Timeout 5) {
-                    $memberCount = Receive-Job $memberJob
-                }
-                Remove-Job $memberJob -Force -ErrorAction SilentlyContinue
+                # Since we already have the Members property, just count it
+                $memberCount = if ($group.Members) { $group.Members.Count } else { 0 }
                 
                 [PSCustomObject]@{
                     Name              = $group.Name
@@ -69,16 +70,11 @@ function Get-ADGroupsAndMembers {
         # Generate and display statistics using Get-CollectionStatistics
         $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType "Groups" -IncludeAccessStatus
         $stats.DisplayStatistics()
+
+        # Export data if requested
+        Export-ADData -ObjectType "Groups" -Data $groupObjects -ExportPath $ExportPath -Export:$Export
         
-        if ($Export) {
-            if (-not (Test-Path $ExportPath)) {
-                New-Item -ItemType Directory -Path $ExportPath -Force
-            }
-            $exportFile = Join-Path $ExportPath "Groups_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
-            $groupObjects | Export-Csv $exportFile -NoTypeInformation
-            Write-Log "Groups exported to $exportFile" -Level Info
-        }
-        
+        # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "Group retrieval complete" -Completed
         return $groupObjects
         

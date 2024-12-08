@@ -35,18 +35,13 @@ function Get-ADUsers {
         }
 
         # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType "Groups" -IncludeAccessStatus
+        $stats = Get-CollectionStatistics -Data $users -ObjectType "Groups" -IncludeAccessStatus
         $stats.DisplayStatistics()
+
+        # Export data if requested
+        Export-ADData -ObjectType "Users" -Data $users -ExportPath $ExportPath -Export:$Export
         
-        if ($Export) {
-            if (-not (Test-Path $ExportPath)) {
-                New-Item -ItemType Directory -Path $ExportPath -Force
-            }
-            $exportFile = Join-Path $ExportPath "Users_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
-            $users | Export-Csv $exportFile -NoTypeInformation
-            Write-Log "Users exported to $exportFile" -Level Info
-        }
-        
+        # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "User retrieval complete" -Completed
         return $users
     }

@@ -31,18 +31,13 @@ function Get-ADComputers {
         }
         
         # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType "Groups" -IncludeAccessStatus
+        $stats = Get-CollectionStatistics -Data $computers -ObjectType "Groups" -IncludeAccessStatus
         $stats.DisplayStatistics()
-        
-        if ($Export) {
-            if (-not (Test-Path $ExportPath)) {
-                New-Item -ItemType Directory -Path $ExportPath -Force
-            }
-            $exportFile = Join-Path $ExportPath "Computers_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
-            $computers | Export-Csv $exportFile -NoTypeInformation
-            Write-Log "Computers exported to $exportFile" -Level Info
-        }
-        
+
+        # Export data if requested
+        Export-ADData -ObjectType "Computers" -Data $computers -ExportPath $ExportPath -Export:$Export
+
+        # Complete progress
         Show-ProgressHelper -Activity "AD Inventory" -Status "Computer retrieval complete" -Completed
         return $computers
     }

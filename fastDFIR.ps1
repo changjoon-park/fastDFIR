@@ -39,6 +39,60 @@ function Get-ADObjects {
     Show-ProgressHelper -Activity "Processing $ObjectType" -Status "Complete" -Completed
     return $results
 }
+function Get-CollectionStatistics {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$Data,
+        [string]$ObjectType,
+        [switch]$IncludeAccessStatus
+    )
+    
+    $stats = [PSCustomObject]@{
+        ObjectType     = $ObjectType
+        TotalCount     = $Data.Count
+        OUDistribution = @{}
+        SuccessCount   = if ($IncludeAccessStatus) { 
+            ($Data | Where-Object { $_.AccessStatus -eq 'Success' }).Count 
+        }
+        else { 0 }
+        ErrorCount     = if ($IncludeAccessStatus) { 
+            ($Data | Where-Object { $_.AccessStatus -ne 'Success' }).Count 
+        }
+        else { 0 }
+    }
+    
+    # Count objects per OU
+    $Data | ForEach-Object {
+        $ouPath = ($_.DistinguishedName -split ',(?=OU=)' | Where-Object { $_ -match '^OU=' }) -join ','
+        if (-not $ouPath) { $ouPath = "No OU (Root)" }
+        
+        if ($stats.OUDistribution.ContainsKey($ouPath)) {
+            $stats.OUDistribution[$ouPath]++
+        }
+        else {
+            $stats.OUDistribution[$ouPath] = 1
+        }
+    }
+    
+    # Add DisplayStatistics method
+    Add-Member -InputObject $stats -MemberType ScriptMethod -Name DisplayStatistics -Value {
+        Write-Host "`n=== $($this.ObjectType) Collection Statistics ==="
+        Write-Host "Total $($this.ObjectType): $($this.TotalCount)"
+        
+        if ($this.SuccessCount -gt 0 -or $this.ErrorCount -gt 0) {
+            Write-Host "Successfully Processed: $($this.SuccessCount)"
+            Write-Host "Errors: $($this.ErrorCount)"
+        }
+        
+        Write-Host "`nDistribution by OU:"
+        $this.OUDistribution.GetEnumerator() | Sort-Object Name | ForEach-Object {
+            Write-Host ("  - {0,-50} : {1,5}" -f $_.Key, $_.Value)
+        }
+    }
+    
+    return $stats
+}
 
 function Import-ADModule {
     [CmdletBinding()]
@@ -186,7 +240,6 @@ function Write-Log {
     Add-Content -Path $script:Config.LogFile -Value $logEntry
 }
 
-# Main script
 function Get-ADComputers {
     [CmdletBinding()]
     param(
@@ -210,8 +263,6 @@ function Get-ADComputers {
             'DNSHostName'
         )
         
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Getting computers..."
-        
         $allComputers = Invoke-WithRetry -ScriptBlock {
             Get-ADComputer -Filter * -Properties $properties -ErrorAction Stop
         }
@@ -221,8 +272,11 @@ function Get-ADComputers {
             $computer | Select-Object $properties
         }
         
+        # Generate and display statistics
+        $stats = Get-CollectionStatistics -Data $computers -ObjectType "Groups" -IncludeAccessStatus
+        $stats.DisplayStatistics()
+        
         if ($Export) {
-            Show-ProgressHelper -Activity "AD Inventory" -Status "Exporting computer data..."
             if (-not (Test-Path $ExportPath)) {
                 New-Item -ItemType Directory -Path $ExportPath -Force
             }
@@ -233,13 +287,13 @@ function Get-ADComputers {
         
         Show-ProgressHelper -Activity "AD Inventory" -Status "Computer retrieval complete" -Completed
         return $computers
-        
     }
     catch {
         Write-Log "Error retrieving computers: $($_.Exception.Message)" -Level Error
         Show-ErrorBox "Unable to retrieve computer accounts. Check permissions."
     }
 }
+
 
 function Get-ADGroupsAndMembers {
     [CmdletBinding()]
@@ -252,45 +306,68 @@ function Get-ADGroupsAndMembers {
         Write-Log "Retrieving groups and members..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing group retrieval..."
         
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Getting groups..."
-        
+        # First get all groups with basic properties in one quick query
         $groups = Invoke-WithRetry -ScriptBlock {
-            Get-ADGroup -Filter * -Properties Members, Description, Info, Created, Modified -ErrorAction Stop
+            Get-ADGroup -Filter * -Properties Name, Description, Created, Modified, DistinguishedName, 
+            memberOf, GroupCategory, GroupScope -ErrorAction Stop
         }
+        
+        $totalGroups = ($groups | Measure-Object).Count
+        Write-Log "Found $totalGroups groups to process" -Level Info
         
         $groupObjects = Get-ADObjects -ObjectType "Groups" -Objects $groups -ProcessingScript {
             param($group)
             
-            $members = $null
-            if ($group.Members) {
-                $memberNames = foreach ($memberDN in $group.Members) {
-                    try {
-                        $member = Invoke-WithRetry -ScriptBlock {
-                            Get-ADObject $memberDN -Properties name -ErrorAction Stop
-                        }
-                        $member.Name
-                    }
-                    catch {
-                        Write-Log "Could not resolve member $memberDN" -Level Warning
-                        "Unknown Member"
-                    }
+            try {
+                # Fast member count retrieval with timeout protection
+                $memberCount = 0
+                $members = "Not retrieved due to timeout"
+                
+                $memberJob = Start-Job -ScriptBlock {
+                    param($groupDN)
+                    (Get-ADGroup $groupDN -Properties Members).Members.Count
+                } -ArgumentList $group.DistinguishedName
+                
+                # Only wait 5 seconds max for member count
+                if (Wait-Job $memberJob -Timeout 5) {
+                    $memberCount = Receive-Job $memberJob
                 }
-                $members = $memberNames -join "; "
+                Remove-Job $memberJob -Force -ErrorAction SilentlyContinue
+                
+                [PSCustomObject]@{
+                    Name              = $group.Name
+                    Description       = $group.Description
+                    MemberCount       = $memberCount
+                    GroupCategory     = $group.GroupCategory
+                    GroupScope        = $group.GroupScope
+                    Created           = $group.Created
+                    Modified          = $group.Modified
+                    DistinguishedName = $group.DistinguishedName
+                    AccessStatus      = "Success"
+                }
             }
-            
-            [PSCustomObject]@{
-                Name              = $group.Name
-                Description       = $group.Description
-                MemberCount       = ($group.Members | Measure-Object).Count
-                Members           = $members
-                Created           = $group.Created
-                Modified          = $group.Modified
-                DistinguishedName = $group.DistinguishedName
+            catch {
+                Write-Log "Error processing group $($group.Name): $($_.Exception.Message)" -Level Warning
+                
+                [PSCustomObject]@{
+                    Name              = $group.Name
+                    Description       = $group.Description
+                    MemberCount       = 0
+                    GroupCategory     = $group.GroupCategory
+                    GroupScope        = $group.GroupScope
+                    Created           = $group.Created
+                    Modified          = $group.Modified
+                    DistinguishedName = $group.DistinguishedName
+                    AccessStatus      = "Access Error: $($_.Exception.Message)"
+                }
             }
         }
         
+        # Generate and display statistics using Get-CollectionStatistics
+        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType "Groups" -IncludeAccessStatus
+        $stats.DisplayStatistics()
+        
         if ($Export) {
-            Show-ProgressHelper -Activity "AD Inventory" -Status "Exporting group data..."
             if (-not (Test-Path $ExportPath)) {
                 New-Item -ItemType Directory -Path $ExportPath -Force
             }
@@ -305,7 +382,8 @@ function Get-ADGroupsAndMembers {
     }
     catch {
         Write-Log "Error retrieving groups: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve groups or group members. Check permissions."
+        Show-ErrorBox "Unable to retrieve groups. Check permissions."
+        return $null
     }
 }
 
@@ -319,7 +397,6 @@ function Get-ADUsers {
     
     try {
         Write-Log "Retrieving user accounts..." -Level Info
-        # Make sure to provide both Activity and Status here
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing user retrieval..."
         
         $filter = if ($IncludeDisabled) { "*" } else { "Enabled -eq 'True'" }
@@ -333,11 +410,10 @@ function Get-ADUsers {
             'PasswordLastSet',
             'PasswordNeverExpires',
             'PasswordExpired',
-            'AccountExpirationDate'
+            'AccountExpirationDate',
+            'DistinguishedName'  # Added for OU tracking
         )
         
-        # Make sure to provide both Activity and Status here
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Getting users..."
         $allUsers = Invoke-WithRetry -ScriptBlock {
             Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
         }
@@ -346,10 +422,12 @@ function Get-ADUsers {
             param($user)
             $user | Select-Object $properties
         }
+
+        # Generate and display statistics
+        $stats = Get-CollectionStatistics -Data $users -ObjectType "Groups" -IncludeAccessStatus
+        $stats.DisplayStatistics()
         
         if ($Export) {
-            # Make sure to provide both Activity and Status here
-            Show-ProgressHelper -Activity "AD Inventory" -Status "Exporting user data..."
             if (-not (Test-Path $ExportPath)) {
                 New-Item -ItemType Directory -Path $ExportPath -Force
             }
@@ -360,11 +438,6 @@ function Get-ADUsers {
         
         Show-ProgressHelper -Activity "AD Inventory" -Status "User retrieval complete" -Completed
         return $users
-        
-    }
-    catch [Microsoft.ActiveDirectory.Management.ADServerDownException] {
-        Write-Log "Domain controller is not accessible" -Level Error
-        Show-ErrorBox "Domain controller is not accessible. Please check network connectivity."
     }
     catch {
         Write-Log "Error retrieving users: $($_.Exception.Message)" -Level Error
@@ -455,7 +528,7 @@ function Get-DomainInventory {
                 -Status "Processing Users" `
                 -PercentComplete (($currentStep / $totalSteps) * 100)
             
-            Get-ADUsers -Export -ExportPath $ExportPath
+            Get-ADUsers -Export -ExportPath $ExportPath | Out-Null
             $currentStep++
         }
         
@@ -464,7 +537,7 @@ function Get-DomainInventory {
                 -Status "Processing Computers" `
                 -PercentComplete (($currentStep / $totalSteps) * 100)
             
-            Get-ADComputers -Export -ExportPath $ExportPath
+            Get-ADComputers -Export -ExportPath $ExportPath | Out-Null
             $currentStep++
         }
         
@@ -473,7 +546,7 @@ function Get-DomainInventory {
                 -Status "Processing Groups" `
                 -PercentComplete (($currentStep / $totalSteps) * 100)
             
-            Get-ADGroupsAndMembers -Export -ExportPath $ExportPath
+            Get-ADGroupsAndMembers -Export -ExportPath $ExportPath | Out-Null
             $currentStep++
         }
         
