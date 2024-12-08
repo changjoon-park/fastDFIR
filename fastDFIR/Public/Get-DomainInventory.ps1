@@ -1,4 +1,4 @@
-function Run-DomainInventory {
+function Get-DomainInventory {
     [CmdletBinding()]
     param(
         [ValidateScript({ Test-Path $_ })]

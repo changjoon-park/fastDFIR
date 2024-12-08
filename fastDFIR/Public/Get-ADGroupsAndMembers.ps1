@@ -15,7 +15,7 @@ function Get-ADGroupsAndMembers {
             Get-ADGroup -Filter * -Properties Members, Description, Info, Created, Modified -ErrorAction Stop
         }
         
-        $groupObjects = Process-ADObjects -ObjectType "Groups" -Objects $groups -ProcessingScript {
+        $groupObjects = Get-ADObjects -ObjectType "Groups" -Objects $groups -ProcessingScript {
             param($group)
             
             $members = $null

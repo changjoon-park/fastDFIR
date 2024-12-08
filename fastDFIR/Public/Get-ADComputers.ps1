@@ -27,7 +27,7 @@ function Get-ADComputers {
             Get-ADComputer -Filter * -Properties $properties -ErrorAction Stop
         }
         
-        $computers = Process-ADObjects -ObjectType "Computers" -Objects $allComputers -ProcessingScript {
+        $computers = Get-ADObjects -ObjectType "Computers" -Objects $allComputers -ProcessingScript {
             param($computer)
             $computer | Select-Object $properties
         }
