@@ -5,7 +5,7 @@ $script:Config = @{
     MaxConcurrentJobs   = 5
     RetryAttempts       = 3
     RetryDelaySeconds   = 5
-    DefaultExportFormat = "CSV"
+    DefaultExportFormat = "JSON"
     VerboseOutput       = $false
     MaxQueryResults     = 10000
 }
