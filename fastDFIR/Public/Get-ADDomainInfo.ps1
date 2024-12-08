@@ -36,6 +36,13 @@ function Get-ADDomainInfo {
                     "Access Denied or Connection Failed"
                 }
 
+                # Get OU information
+                $ouInfo = Get-ADOUInfo -DomainName $domainName
+
+                # Add this line after getting domain controllers
+                $replicationInfo = Get-ADReplicationInfo -DomainName $domainName
+
+
                 [PSCustomObject]@{
                     DomainName           = $domainName
                     DomainMode           = $domain.DomainMode
@@ -43,6 +50,8 @@ function Get-ADDomainInfo {
                     RIDMaster            = $domain.RIDMaster
                     InfrastructureMaster = $domain.InfrastructureMaster
                     DomainControllers    = $domainControllers
+                    OrganizationalUnits  = $ouInfo
+                    ReplicationTopology  = $replicationInfo
                     AccessStatus         = "Success"
                 }
             }
@@ -56,6 +65,8 @@ function Get-ADDomainInfo {
                     RIDMaster            = $null
                     InfrastructureMaster = $null
                     DomainControllers    = @()
+                    OrganizationalUnits  = $null
+                    ReplicationTopology  = $null
                     AccessStatus         = "Access Failed: $($_.Exception.Message)"
                 }
             }
