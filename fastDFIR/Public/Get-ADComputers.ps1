@@ -32,7 +32,6 @@ function Get-ADComputers {
             try {
                 [PSCustomObject]@{
                     Name                   = $computer.Name
-                    DistinguishedName      = $computer.DistinguishedName
                     OperatingSystem        = $computer.OperatingSystem
                     OperatingSystemVersion = $computer.OperatingSystemVersion
                     Enabled                = $computer.Enabled
@@ -40,6 +39,7 @@ function Get-ADComputers {
                     Created                = $computer.Created
                     Modified               = $computer.Modified
                     DNSHostName            = $computer.DNSHostName
+                    DistinguishedName      = $computer.DistinguishedName
                     AccessStatus           = "Success"
                 }
             }
@@ -48,7 +48,6 @@ function Get-ADComputers {
                 
                 [PSCustomObject]@{
                     Name                   = $computer.Name
-                    DistinguishedName      = $computer.DistinguishedName
                     OperatingSystem        = $null
                     OperatingSystemVersion = $null
                     Enabled                = $null
@@ -56,6 +55,7 @@ function Get-ADComputers {
                     Created                = $null
                     Modified               = $null
                     DNSHostName            = $null
+                    DistinguishedName      = $computer.DistinguishedName
                     AccessStatus           = "Access Error: $($_.Exception.Message)"
                 }
             }

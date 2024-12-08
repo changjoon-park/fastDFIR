@@ -22,7 +22,8 @@ function Get-ADUsers {
             'PasswordLastSet',
             'PasswordNeverExpires',
             'PasswordExpired',
-            'DistinguishedName'
+            'DistinguishedName',
+            'MemberOf'  # Added MemberOf property
         )
         
         $allUsers = Invoke-WithRetry -ScriptBlock {
@@ -33,6 +34,19 @@ function Get-ADUsers {
             param($user)
             
             try {
+                # Get group names from MemberOf collection
+                $groupMemberships = @($user.MemberOf | ForEach-Object {
+                        try {
+                            $groupDN = $_
+                            $group = Get-ADGroup $groupDN -Properties Name
+                            $group.Name
+                        }
+                        catch {
+                            Write-Log "Error resolving group $groupDN : $($_.Exception.Message)" -Level Warning
+                            $groupDN  # Return DN if name resolution fails
+                        }
+                    })
+
                 [PSCustomObject]@{
                     SamAccountName       = $user.SamAccountName
                     DisplayName          = $user.DisplayName
@@ -42,6 +56,8 @@ function Get-ADUsers {
                     PasswordLastSet      = $user.PasswordLastSet
                     PasswordNeverExpires = $user.PasswordNeverExpires
                     PasswordExpired      = $user.PasswordExpired
+                    GroupMemberships     = $groupMemberships  # Added group memberships
+                    GroupCount           = $groupMemberships.Count  # Added count of groups
                     DistinguishedName    = $user.DistinguishedName
                     AccessStatus         = "Success"
                 }
@@ -58,6 +74,8 @@ function Get-ADUsers {
                     PasswordLastSet      = $null
                     PasswordNeverExpires = $null
                     PasswordExpired      = $null
+                    GroupMemberships     = @()  # Empty array for failed processing
+                    GroupCount           = 0    # Zero for failed processing
                     DistinguishedName    = $null
                     AccessStatus         = "Access Error: $($_.Exception.Message)"
                 }
