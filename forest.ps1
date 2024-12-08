@@ -120,7 +120,7 @@ function Show-ProgressHelper {
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]  # Add validation
-        [string]$Activity = "Processing", # Add default value even though it's mandatory
+        [string]$Activity, # Add default value even though it's mandatory
         [string]$Status = "Processing...",
         [int]$PercentComplete = -1,
         [string]$CurrentOperation = "",
@@ -256,57 +256,6 @@ function Get-DomainInfo {
         Write-Log "Failed to retrieve domain information: $($_.Exception.Message)" -Level Error
         Show-ErrorBox "Insufficient permissions or unable to retrieve domain info."
     }
-}
-
-function Show-ProgressHelper {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$Activity,
-        [Parameter(Mandatory)]
-        [string]$Status,
-        [int]$PercentComplete = -1,
-        [string]$CurrentOperation = "",
-        [switch]$Completed
-    )
-    
-    if ($Completed) {
-        Write-Progress -Activity $Activity -Completed
-    }
-    else {
-        Write-Progress -Activity $Activity -Status $Status -PercentComplete $PercentComplete -CurrentOperation $CurrentOperation
-    }
-}
-
-function Process-ADObjects {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$ObjectType,
-        [Parameter(Mandatory)]
-        [System.Collections.IEnumerable]$Objects,
-        [Parameter(Mandatory)]
-        [scriptblock]$ProcessingScript
-    )
-    
-    $totalCount = ($Objects | Measure-Object).Count
-    $counter = 0
-    $results = @()
-    
-    foreach ($object in $Objects) {
-        $counter++
-        $percentComplete = ($counter / $totalCount) * 100
-        
-        Show-ProgressHelper -Activity "Processing $ObjectType" `
-            -Status "Processing $counter of $totalCount" `
-            -CurrentOperation $object.Name `
-            -PercentComplete $percentComplete
-        
-        $results += & $ProcessingScript $object
-    }
-    
-    Show-ProgressHelper -Activity "Processing $ObjectType" -Completed
-    return $results
 }
 
 function Get-ADUsers {
