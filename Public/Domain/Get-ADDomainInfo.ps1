@@ -72,6 +72,9 @@ function Get-ADDomainInfo {
             }
         }
 
+        # Export data 
+        Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath
+
         return $results
     }
     catch {

@@ -1,9 +1,9 @@
-# Merged Script - Created 2024-12-09 02:12:16
+# Merged Script - Created 2024-12-09 14:08:36
 
 
 #region MergedScript.ps1
 
-# Merged Script - Created 2024-12-09 02:12:16
+# Merged Script - Created 2024-12-09 14:08:36
 
 
 #region MergedScript.ps1
@@ -659,10 +659,8 @@ function Get-ADComputers {
             'Created',
             'Modified',
             'DNSHostName',
-            'ServicePrincipalNames', # Added for role detection
-            'Description',
-            'Location',
-            'primaryGroupID'          # To differentiate workstations/servers
+            'SID',
+            'ServicePrincipalNames'  # Added for service detection
         )
         
         $allComputers = Invoke-WithRetry -ScriptBlock {
@@ -673,100 +671,79 @@ function Get-ADComputers {
             param($computer)
             
             try {
-                # Determine computer type and roles
-                $computerType = switch ($computer.primaryGroupID) {
-                    515 { "Server" }
-                    516 { "Workstation" }
-                    default { "Unknown" }
-                }
+                # System Information via WMI
+                $osInfo = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $computer.DNSHostName -ErrorAction Stop
+                $sysInfo = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $computer.DNSHostName -ErrorAction Stop
+                $biosInfo = Get-WmiObject -Class Win32_BIOS -ComputerName $computer.DNSHostName -ErrorAction Stop
+                
+                # Services Status
+                $services = Get-WmiObject -Class Win32_Service -ComputerName $computer.DNSHostName -ErrorAction Stop |
+                Where-Object { $_.StartMode -eq 'Auto' } |
+                Select-Object Name, State, StartMode, StartName
+                
+                # Network Configuration
+                $networkConfig = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $computer.DNSHostName -ErrorAction Stop |
+                Where-Object { $_.IPEnabled -eq $true } |
+                Select-Object IPAddress, DefaultIPGateway, DNSServerSearchOrder, MACAddress
 
-                # Parse SPNs to detect roles
-                $roles = @()
-                foreach ($spn in $computer.ServicePrincipalNames) {
-                    switch -Regex ($spn) {
-                        'DNS|host' { $roles += "DNS Server" }
-                        'DHCP' { $roles += "DHCP Server" }
-                        'CA' { $roles += "Certificate Authority" }
-                        'MSSQL' { $roles += "SQL Server" }
-                        'IISW3SVC' { $roles += "Web Server" }
-                        'exchangeMDB' { $roles += "Exchange Server" }
-                        'WSMAN' { $roles += "Windows Management" }
-                        'FTP' { $roles += "FTP Server" }
-                        'LDAP' { $roles += "Domain Controller" }
-                        'RPCSS' { $roles += "RPC Server" }
-                        'BITS' { $roles += "BITS Server" }
-                    }
-                }
-                $roles = $roles | Select-Object -Unique
+                # Disk Information
+                $diskInfo = Get-WmiObject -Class Win32_LogicalDisk -ComputerName $computer.DNSHostName -ErrorAction Stop |
+                Where-Object { $_.DriveType -eq 3 } |
+                Select-Object DeviceID, Size, FreeSpace
 
-                # Check if it's a file server (attempt to get shares)
-                if ($computerType -eq "Server") {
-                    try {
-                        $shares = Get-WmiObject -Class Win32_Share -ComputerName $computer.DNSHostName -ErrorAction Stop
-                        if ($shares | Where-Object { $_.Type -eq 0 }) {
-                            $roles += "File Server"
-                        }
-                    }
-                    catch {
-                        Write-Log "Unable to query shares on $($computer.Name): $($_.Exception.Message)" -Level Warning
-                    }
-                }
+                # Startup Commands
+                $startupCommands = Get-WmiObject -Class Win32_StartupCommand -ComputerName $computer.DNSHostName -ErrorAction Stop |
+                Select-Object Command, Location, User
 
-                # Get additional server features if possible
-                if ($computerType -eq "Server") {
-                    try {
-                        $serverFeatures = Invoke-Command -ComputerName $computer.DNSHostName -ScriptBlock {
-                            Get-WindowsFeature | Where-Object Installed
-                        } -ErrorAction Stop
-                        
-                        foreach ($feature in $serverFeatures) {
-                            $roles += "Windows Feature: $($feature.Name)"
-                        }
-                    }
-                    catch {
-                        Write-Log "Unable to query Windows features on $($computer.Name): $($_.Exception.Message)" -Level Warning
-                    }
-                }
+                # Share Information
+                $shares = Get-WmiObject -Class Win32_Share -ComputerName $computer.DNSHostName -ErrorAction Stop |
+                Select-Object Name, Path, Description
 
                 [PSCustomObject]@{
-                    Name                       = $computer.Name
-                    DNSHostName                = $computer.DNSHostName
-                    ComputerType               = $computerType
-                    OperatingSystem            = $computer.OperatingSystem
-                    OperatingSystemVersion     = $computer.OperatingSystemVersion
-                    OperatingSystemServicePack = $computer.OperatingSystemServicePack
-                    Roles                      = $roles
-                    Enabled                    = $computer.Enabled
-                    LastLogonDate              = $computer.LastLogonDate
-                    Created                    = $computer.Created
-                    Modified                   = $computer.Modified
-                    Description                = $computer.Description
-                    Location                   = $computer.Location
-                    DistinguishedName          = $computer.DistinguishedName
-                    DomainJoined               = $true  # If it's in AD, it's domain-joined
-                    AccessStatus               = "Success"
+                    # Basic AD Info
+                    Name                   = $computer.Name
+                    DNSHostName            = $computer.DNSHostName
+                    OperatingSystem        = $computer.OperatingSystem
+                    OperatingSystemVersion = $computer.OperatingSystemVersion
+                    Enabled                = $computer.Enabled
+                    LastLogonDate          = $computer.LastLogonDate
+                    Created                = $computer.Created
+                    Modified               = $computer.Modified
+                    DistinguishedName      = $computer.DistinguishedName
+
+                    # System Details
+                    LastBootUpTime         = $osInfo.ConvertToDateTime($osInfo.LastBootUpTime)
+                    PhysicalMemory         = [math]::Round($sysInfo.TotalPhysicalMemory / 1GB, 2)
+                    Manufacturer           = $sysInfo.Manufacturer
+                    Model                  = $sysInfo.Model
+                    BIOSVersion            = $biosInfo.Version
+                    SerialNumber           = $biosInfo.SerialNumber
+
+                    # Security Info
+                    AutoStartServices      = $services
+                    NetworkConfiguration   = $networkConfig
+                    DiskInformation        = $diskInfo
+                    StartupCommands        = $startupCommands
+                    ShareInformation       = $shares
+
+                    AccessStatus           = "Success"
                 }
             }
             catch {
                 Write-Log "Error processing computer $($computer.Name): $($_.Exception.Message)" -Level Warning
                 
                 [PSCustomObject]@{
-                    Name                       = $computer.Name
-                    DNSHostName                = $null
-                    ComputerType               = "Unknown"
-                    OperatingSystem            = $null
-                    OperatingSystemVersion     = $null
-                    OperatingSystemServicePack = $null
-                    Roles                      = @()
-                    Enabled                    = $null
-                    LastLogonDate              = $null
-                    Created                    = $null
-                    Modified                   = $null
-                    Description                = $null
-                    Location                   = $null
-                    DistinguishedName          = $computer.DistinguishedName
-                    DomainJoined               = $null
-                    AccessStatus               = "Access Error: $($_.Exception.Message)"
+                    Name                   = $computer.Name
+                    DNSHostName            = $computer.DNSHostName
+                    OperatingSystem        = $computer.OperatingSystem
+                    OperatingSystemVersion = $computer.OperatingSystemVersion
+                    Enabled                = $computer.Enabled
+                    LastLogonDate          = $computer.LastLogonDate
+                    Created                = $computer.Created
+                    Modified               = $computer.Modified
+                    DistinguishedName      = $computer.DistinguishedName
+                    SID                    = $computer.SID
+                    AccessStatus           = "Access Error: $($_.Exception.Message)"
                 }
             }
         }
@@ -809,7 +786,6 @@ function Get-ADGroupsAndMembers {
             'GroupScope',
             'Members',
             'MemberOf',
-            'AdminCount',
             'DistinguishedName',
             'Created',
             'Modified'
@@ -823,32 +799,13 @@ function Get-ADGroupsAndMembers {
             param($group)
             
             try {
-                # Get nested group membership recursively
-                $allMembers = Get-ADGroupNestedMembers -Group $group
-                
-                # Determine if this is a privileged group
-                $isPrivileged = $group.AdminCount -eq 1 -or 
-                $group.Name -in @('Domain Admins', 'Enterprise Admins', 'Schema Admins')
-
                 [PSCustomObject]@{
                     Name                   = $group.Name
                     Description            = $group.Description
                     GroupCategory          = $group.GroupCategory  # Security or Distribution
                     GroupScope             = $group.GroupScope       # Universal, Global, DomainLocal
-                    IsPrivileged           = $isPrivileged
-                    DirectMemberCount      = ($group.Members | Measure-Object).Count
-                    TotalNestedMemberCount = ($allMembers | Measure-Object).Count
-                    Members                = $allMembers | ForEach-Object {
-                        [PSCustomObject]@{
-                            Name              = $_.Name
-                            ObjectClass       = $_.ObjectClass
-                            DistinguishedName = $_.DistinguishedName
-                            MemberType        = if ($_.ObjectClass -eq 'group') { 'NestedGroup' } else { 'DirectMember' }
-                        }
-                    }
-                    ParentGroups           = $group.MemberOf | ForEach-Object {
-                        Get-ADGroup $_ | Select-Object -ExpandProperty Name
-                    }
+                    TotalNestedMemberCount = $group.Members.Count
+                    Members                = $group.Members
                     Created                = $group.Created
                     Modified               = $group.Modified
                     DistinguishedName      = $group.DistinguishedName
@@ -863,11 +820,8 @@ function Get-ADGroupsAndMembers {
                     Description            = $group.Description
                     GroupCategory          = $group.GroupCategory
                     GroupScope             = $group.GroupScope
-                    IsPrivileged           = $false
-                    DirectMemberCount      = 0
                     TotalNestedMemberCount = 0
                     Members                = @()
-                    ParentGroups           = @()
                     Created                = $group.Created
                     Modified               = $group.Modified
                     DistinguishedName      = $group.DistinguishedName
@@ -881,85 +835,6 @@ function Get-ADGroupsAndMembers {
     catch {
         Write-Log "Error retrieving groups: $($_.Exception.Message)" -Level Error
         Show-ErrorBox "Unable to retrieve groups. Check permissions."
-    }
-}
-
-# Helper function to get nested group members recursively
-function Get-ADGroupNestedMembers {
-    param(
-        [Parameter(Mandatory)]
-        [Microsoft.ActiveDirectory.Management.ADGroup]$Group,
-        [System.Collections.ArrayList]$ProcessedGroups = @()
-    )
-    
-    if ($ProcessedGroups -contains $Group.DistinguishedName) {
-        return @()
-    }
-    
-    [void]$ProcessedGroups.Add($Group.DistinguishedName)
-    
-    $members = foreach ($member in $Group.Members) {
-        $obj = Get-ADObject $member -Properties objectClass, name, distinguishedName
-        
-        if ($obj.objectClass -eq 'group') {
-            $obj
-            Get-ADGroupNestedMembers -Group (Get-ADGroup $obj -Properties Members) -ProcessedGroups $ProcessedGroups
-        }
-        else {
-            $obj
-        }
-    }
-    
-    return $members
-}
-
-#endregion
-
-
-#region Get-ADOUInfo.ps1
-
-function Get-ADOUInfo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$DomainName
-    )
-    
-    try {
-        Write-Log "Retrieving OU information for domain: $DomainName..." -Level Info
-        
-        $ous = Get-ADOrganizationalUnit -Filter * -Server $DomainName -Properties * -ErrorAction Stop
-        
-        $ouInfo = foreach ($ou in $ous) {
-            # Get ACL information
-            $acl = Get-Acl -Path "AD:$($ou.DistinguishedName)" -ErrorAction SilentlyContinue
-            
-            # Process permissions
-            $permissions = $acl.Access | ForEach-Object {
-                [PSCustomObject]@{
-                    IdentityReference     = $_.IdentityReference.ToString()
-                    AccessControlType     = $_.AccessControlType.ToString()
-                    ActiveDirectoryRights = $_.ActiveDirectoryRights.ToString()
-                    InheritanceType       = $_.InheritanceType.ToString()
-                }
-            }
-            
-            [PSCustomObject]@{
-                Name                 = $ou.Name
-                DistinguishedName    = $ou.DistinguishedName
-                Description          = $ou.Description
-                Created              = $ou.Created
-                Modified             = $ou.Modified
-                ChildOUs             = ($ou.DistinguishedName -split ',OU=' | Select-Object -Skip 1) -join ',OU='
-                DelegatedPermissions = $permissions
-            }
-        }
-        
-        return $ouInfo
-    }
-    catch {
-        Write-Log "Error retrieving OU information for $DomainName : $($_.Exception.Message)" -Level Error
-        return $null
     }
 }
 
@@ -1001,84 +876,65 @@ function Get-ADUsers {
             Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
         }
         
-        # Get privileged groups for reference
-        $privilegedGroups = @(
-            'Domain Admins',
-            'Enterprise Admins',
-            'Schema Admins',
-            'Administrators',
-            'Account Operators',
-            'Backup Operators',
-            'Server Operators'
-        )
-        
         $users = Get-ADObjects -ObjectType $ObjectType -Objects $allUsers -ProcessingScript {
             param($user)
             
             try {
-                # Check if user is privileged
-                $isPrivileged = $false
-                $privilegedGroupMemberships = @()
-                foreach ($group in $user.MemberOf) {
-                    $groupName = (Get-ADGroup $group).Name
-                    if ($privilegedGroups -contains $groupName) {
-                        $isPrivileged = $true
-                        $privilegedGroupMemberships += $groupName
-                    }
-                }
-
                 # Check for delegated permissions
                 $delegatedPermissions = Get-ObjectDelegatedPermissions -Identity $user.DistinguishedName
 
                 # Determine account type
-                $accountType = switch -Regex ($user.DistinguishedName) {
-                    'OU=Service Accounts,' { 'ServiceAccount' }
-                    'CN=Managed Service Accounts,' { 'ManagedServiceAccount' }
-                    default { 'UserAccount' }
+                $accountType = if ($user.ServicePrincipalNames) {
+                    'ServiceAccount'
+                }
+                elseif ($user.ObjectClass -eq 'msDS-ManagedServiceAccount') {
+                    'ManagedServiceAccount'
+                }
+                elseif ($user.ObjectClass -eq 'msDS-GroupManagedServiceAccount') {
+                    'GroupManagedServiceAccount'
+                }
+                else {
+                    'UserAccount'
                 }
 
                 [PSCustomObject]@{
-                    SamAccountName             = $user.SamAccountName
-                    DisplayName                = $user.DisplayName
-                    EmailAddress               = $user.EmailAddress
-                    Enabled                    = $user.Enabled
-                    LastLogonDate              = $user.LastLogonDate
-                    PasswordLastSet            = $user.PasswordLastSet
-                    PasswordNeverExpires       = $user.PasswordNeverExpires
-                    PasswordExpired            = $user.PasswordExpired
-                    DistinguishedName          = $user.DistinguishedName
-                    AccountType                = $accountType
-                    IsPrivileged               = $isPrivileged
-                    PrivilegedGroupMemberships = $privilegedGroupMemberships
-                    DelegatedPermissions       = $delegatedPermissions
-                    AdminCount                 = $user.AdminCount
-                    AccountStatus              = if ($user.Enabled) { 
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $user.DisplayName
+                    EmailAddress         = $user.EmailAddress
+                    Enabled              = $user.Enabled
+                    LastLogonDate        = $user.LastLogonDate
+                    PasswordLastSet      = $user.PasswordLastSet
+                    PasswordNeverExpires = $user.PasswordNeverExpires
+                    PasswordExpired      = $user.PasswordExpired
+                    DistinguishedName    = $user.DistinguishedName
+                    AccountType          = $accountType
+                    SID                  = $user.SID
+                    DelegatedPermissions = $delegatedPermissions
+                    AccountStatus        = if ($user.Enabled) { 
                         if ($user.PasswordExpired) { "Expired" } else { "Active" }
                     }
                     else { "Disabled" }
-                    AccessStatus               = "Success"
+                    AccessStatus         = "Success"
                 }
             }
             catch {
                 Write-Log "Error processing user $($user.SamAccountName): $($_.Exception.Message)" -Level Warning
                 
                 [PSCustomObject]@{
-                    SamAccountName             = $user.SamAccountName
-                    DisplayName                = $null
-                    EmailAddress               = $null
-                    Enabled                    = $null
-                    LastLogonDate              = $null
-                    PasswordLastSet            = $null
-                    PasswordNeverExpires       = $null
-                    PasswordExpired            = $null
-                    DistinguishedName          = $user.DistinguishedName
-                    AccountType                = $null
-                    IsPrivileged               = $null
-                    PrivilegedGroupMemberships = @()
-                    DelegatedPermissions       = @()
-                    AdminCount                 = $null
-                    AccountStatus              = $null
-                    AccessStatus               = "Access Error: $($_.Exception.Message)"
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $null
+                    EmailAddress         = $null
+                    Enabled              = $null
+                    LastLogonDate        = $null
+                    PasswordLastSet      = $null
+                    PasswordNeverExpires = $null
+                    PasswordExpired      = $null
+                    DistinguishedName    = $user.DistinguishedName
+                    AccountType          = $null
+                    SID                  = $null
+                    DelegatedPermissions = @()
+                    AccountStatus        = $null
+                    AccessStatus         = "Access Error: $($_.Exception.Message)"
                 }
             }
         }
@@ -1099,7 +955,14 @@ function Get-ObjectDelegatedPermissions {
     )
     
     try {
-        $acl = Get-Acl -Path "AD:$Identity" -ErrorAction Stop
+        # Ensure the Identity is a valid Distinguished Name
+        if (-not [ADSI]::Exists("LDAP://$Identity")) {
+            throw "Invalid Distinguished Name or object not found"
+        }
+
+        $path = [ADSI]"LDAP://$Identity"
+        $acl = $path.psbase.ObjectSecurity
+
         return $acl.Access | Where-Object { 
             $_.AccessControlType -eq 'Allow' -and 
             $_.IdentityReference -notmatch 'NT AUTHORITY|BUILTIN' 
@@ -1127,9 +990,6 @@ function Get-DomainInventory {
     param(
         [ValidateScript({ Test-Path $_ })]
         [string]$ExportPath = $script:Config.ExportPath,
-        [Parameter()]
-        [ValidateSet("JSON", "CSV")]
-        [string]$ExportType = "JSON", # Default export type is JSON
         [switch]$SkipUsers,
         [switch]$SkipComputers,
         [switch]$SkipGroups
@@ -1253,6 +1113,12 @@ function Get-ForestInventory {
 #endregion
 
 
+#region Get-NetworkInventory.ps1
+
+
+#endregion
+
+
 #region Get-ADDomainInfo.ps1
 
 function Get-ADDomainInfo {
@@ -1333,6 +1199,56 @@ function Get-ADDomainInfo {
     }
     catch {
         Write-Log "Error in Get-ADDomainInfo: $($_.Exception.Message)" -Level Error
+        return $null
+    }
+}
+
+#endregion
+
+
+#region Get-ADOUInfo.ps1
+
+function Get-ADOUInfo {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$DomainName
+    )
+    
+    try {
+        Write-Log "Retrieving OU information for domain: $DomainName..." -Level Info
+        
+        $ous = Get-ADOrganizationalUnit -Filter * -Server $DomainName -Properties * -ErrorAction Stop
+        
+        $ouInfo = foreach ($ou in $ous) {
+            # Get ACL information
+            $acl = Get-Acl -Path "AD:$($ou.DistinguishedName)" -ErrorAction SilentlyContinue
+            
+            # Process permissions
+            $permissions = $acl.Access | ForEach-Object {
+                [PSCustomObject]@{
+                    IdentityReference     = $_.IdentityReference.ToString()
+                    AccessControlType     = $_.AccessControlType.ToString()
+                    ActiveDirectoryRights = $_.ActiveDirectoryRights.ToString()
+                    InheritanceType       = $_.InheritanceType.ToString()
+                }
+            }
+            
+            [PSCustomObject]@{
+                Name                 = $ou.Name
+                DistinguishedName    = $ou.DistinguishedName
+                Description          = $ou.Description
+                Created              = $ou.Created
+                Modified             = $ou.Modified
+                ChildOUs             = ($ou.DistinguishedName -split ',OU=' | Select-Object -Skip 1) -join ',OU='
+                DelegatedPermissions = $permissions
+            }
+        }
+        
+        return $ouInfo
+    }
+    catch {
+        Write-Log "Error retrieving OU information for $DomainName : $($_.Exception.Message)" -Level Error
         return $null
     }
 }

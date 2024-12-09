@@ -23,8 +23,7 @@ function Get-ADUsers {
             'PasswordExpired',
             'DistinguishedName',
             'MemberOf',
-            'AdminCount', # Added for privileged account detection
-            'UserAccountControl'  # Added for account status
+            'SID'
         )
         
         $allUsers = Invoke-WithRetry -ScriptBlock {
@@ -38,20 +37,6 @@ function Get-ADUsers {
                 # Check for delegated permissions
                 $delegatedPermissions = Get-ObjectDelegatedPermissions -Identity $user.DistinguishedName
 
-                # Determine account type
-                $accountType = if ($user.ServicePrincipalNames) {
-                    'ServiceAccount'
-                }
-                elseif ($user.ObjectClass -eq 'msDS-ManagedServiceAccount') {
-                    'ManagedServiceAccount'
-                }
-                elseif ($user.ObjectClass -eq 'msDS-GroupManagedServiceAccount') {
-                    'GroupManagedServiceAccount'
-                }
-                else {
-                    'UserAccount'
-                }
-
                 [PSCustomObject]@{
                     SamAccountName       = $user.SamAccountName
                     DisplayName          = $user.DisplayName
@@ -62,7 +47,6 @@ function Get-ADUsers {
                     PasswordNeverExpires = $user.PasswordNeverExpires
                     PasswordExpired      = $user.PasswordExpired
                     DistinguishedName    = $user.DistinguishedName
-                    AccountType          = $accountType
                     SID                  = $user.SID
                     DelegatedPermissions = $delegatedPermissions
                     AccountStatus        = if ($user.Enabled) { 
@@ -85,7 +69,6 @@ function Get-ADUsers {
                     PasswordNeverExpires = $null
                     PasswordExpired      = $null
                     DistinguishedName    = $user.DistinguishedName
-                    AccountType          = $null
                     SID                  = $null
                     DelegatedPermissions = @()
                     AccountStatus        = $null
@@ -93,6 +76,13 @@ function Get-ADUsers {
                 }
             }
         }
+
+        # Generate and display statistics
+        $stats = Get-CollectionStatistics -Data $users -ObjectType $ObjectType -IncludeAccessStatus
+        $stats.DisplayStatistics()
+        
+        # Export data 
+        Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath
         
         return $users
     }

@@ -32,33 +32,17 @@ function Get-ADComputers {
             param($computer)
             
             try {
-                # System Information via WMI
-                $osInfo = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $computer.DNSHostName -ErrorAction Stop
-                $sysInfo = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $computer.DNSHostName -ErrorAction Stop
-                $biosInfo = Get-WmiObject -Class Win32_BIOS -ComputerName $computer.DNSHostName -ErrorAction Stop
-                
-                # Services Status
-                $services = Get-WmiObject -Class Win32_Service -ComputerName $computer.DNSHostName -ErrorAction Stop |
-                Where-Object { $_.StartMode -eq 'Auto' } |
-                Select-Object Name, State, StartMode, StartName
-                
-                # Network Configuration
-                $networkConfig = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $computer.DNSHostName -ErrorAction Stop |
-                Where-Object { $_.IPEnabled -eq $true } |
-                Select-Object IPAddress, DefaultIPGateway, DNSServerSearchOrder, MACAddress
-
-                # Disk Information
-                $diskInfo = Get-WmiObject -Class Win32_LogicalDisk -ComputerName $computer.DNSHostName -ErrorAction Stop |
-                Where-Object { $_.DriveType -eq 3 } |
-                Select-Object DeviceID, Size, FreeSpace
-
-                # Startup Commands
-                $startupCommands = Get-WmiObject -Class Win32_StartupCommand -ComputerName $computer.DNSHostName -ErrorAction Stop |
-                Select-Object Command, Location, User
-
-                # Share Information
-                $shares = Get-WmiObject -Class Win32_Share -ComputerName $computer.DNSHostName -ErrorAction Stop |
-                Select-Object Name, Path, Description
+                # $serviceTypes = @(foreach ($spn in $computer.ServicePrincipalNames) {
+                #         switch -Regex ($spn) {
+                #             'MSSQL' { 'SQL Server' }
+                #             'exchangeMDB' { 'Exchange' }
+                #             'WWW|HTTP' { 'Web Server' }
+                #             'FTP' { 'FTP Server' }
+                #             'SMTP' { 'SMTP Server' }
+                #             'DNS' { 'DNS Server' }
+                #             'LDAP' { 'Domain Controller' }
+                #         }
+                #     } | Select-Object -Unique)
 
                 [PSCustomObject]@{
                     # Basic AD Info
@@ -71,22 +55,7 @@ function Get-ADComputers {
                     Created                = $computer.Created
                     Modified               = $computer.Modified
                     DistinguishedName      = $computer.DistinguishedName
-
-                    # System Details
-                    LastBootUpTime         = $osInfo.ConvertToDateTime($osInfo.LastBootUpTime)
-                    PhysicalMemory         = [math]::Round($sysInfo.TotalPhysicalMemory / 1GB, 2)
-                    Manufacturer           = $sysInfo.Manufacturer
-                    Model                  = $sysInfo.Model
-                    BIOSVersion            = $biosInfo.Version
-                    SerialNumber           = $biosInfo.SerialNumber
-
-                    # Security Info
-                    AutoStartServices      = $services
-                    NetworkConfiguration   = $networkConfig
-                    DiskInformation        = $diskInfo
-                    StartupCommands        = $startupCommands
-                    ShareInformation       = $shares
-
+                    ServicePrincipalNames  = $computer.ServicePrincipalNames
                     AccessStatus           = "Success"
                 }
             }
@@ -103,7 +72,6 @@ function Get-ADComputers {
                     Created                = $computer.Created
                     Modified               = $computer.Modified
                     DistinguishedName      = $computer.DistinguishedName
-                    SID                    = $computer.SID
                     AccessStatus           = "Access Error: $($_.Exception.Message)"
                 }
             }

@@ -22,7 +22,7 @@ function Get-ForestInventory {
         }
 
         # Get detailed information using the separate functions
-        $trustInfo = Get-ADTrustInfo -RootDomain $forest.RootDomain
+        # $trustInfo = Get-ADTrustInfo -RootDomain $forest.RootDomain # TODO: Root 도메인 말고..
         $domainInfo = Get-ADDomainInfo -DomainNames $forest.Domains
         $siteInfo = Get-ADSiteInfo
         $policyInfo = Get-ADPolicyInfo
