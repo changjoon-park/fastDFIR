@@ -2,10 +2,7 @@ function Get-DomainInventory {
     [CmdletBinding()]
     param(
         [ValidateScript({ Test-Path $_ })]
-        [string]$ExportPath = $script:Config.ExportPath,
-        [switch]$SkipUsers,
-        [switch]$SkipComputers,
-        [switch]$SkipGroups
+        [string]$ExportPath = $script:Config.ExportPath
     )
     
     if (-not (Initialize-Environment)) {
@@ -13,57 +10,34 @@ function Get-DomainInventory {
         return
     }
     
-    if (-not (Import-ADModule)) {
-        Write-Log "AD Module import failed" -Level Error
-        return
-    }
-    
     $startTime = Get-Date
     Write-Log "Starting AD Inventory at $startTime" -Level Info
     
     try {
-        $totalSteps = 3
-        $currentStep = 0
-        
-        $currentStep++
-        
-        # Run selected components
-        if (-not $SkipUsers) {
-            Show-ProgressHelper -Activity "AD Inventory" `
-                -Status "Processing Users" `
-                -PercentComplete (($currentStep / $totalSteps) * 100)
-            
-            Get-ADUsers -ExportPath $ExportPath | Out-Null
-            $currentStep++
+        # Domain Information
+        $domainInfo = [PSCustomObject]@{
+            ForestInfo = Get-ADForestInfo
+            TrustInfo  = Get-ADTrustInfo
+            DomainInfo = Get-ADDomainInfo
         }
-        
-        if (-not $SkipComputers) {
-            Show-ProgressHelper -Activity "AD Inventory" `
-                -Status "Processing Computers" `
-                -PercentComplete (($currentStep / $totalSteps) * 100)
-            
-            Get-ADComputers -ExportPath $ExportPath | Out-Null
-            $currentStep++
+
+        Export-ADData -Data $domainInfo -ExportPath $ExportPath
+
+        # Domain Objects
+        $domainObject = [PSCustomObject]@{
+            ADUsers     = Get-ADUsers
+            ADComputers = Get-ADComputers
+            ADGroups    = Get-ADGroupsAndMembers
         }
-        
-        if (-not $SkipGroups) {
-            Show-ProgressHelper -Activity "AD Inventory" `
-                -Status "Processing Groups" `
-                -PercentComplete (($currentStep / $totalSteps) * 100)
-            
-            Get-ADGroupsAndMembers -ExportPath $ExportPath | Out-Null
-            $currentStep++
-        }
-        
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Complete" -Completed
-        
-        $endTime = Get-Date
-        $duration = $endTime - $startTime
-        Write-Log "AD Inventory completed. Duration: $($duration.TotalMinutes) minutes" -Level Info
-        
+
+        Export-ADData -Data $domainObject -ExportPath $ExportPath
     }
     catch {
         Write-Log "Error during inventory: $($_.Exception.Message)" -Level Error
         Show-ErrorBox "Error during inventory process"
     }
+
+    $endTime = Get-Date
+    $duration = $endTime - $startTime
+    Write-Log "AD Inventory completed. Duration: $($duration.TotalMinutes) minutes" -Level Info
 }

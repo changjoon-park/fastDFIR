@@ -1,15 +1,10 @@
 function Get-ADReplicationInfo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$DomainName
-    )
-    
+
     try {
-        Write-Log "Retrieving replication topology for domain: $DomainName..." -Level Info
+        Write-Log "Retrieving replication topology for domain..." -Level Info
         
         # Get replication connections
-        $replicationConnections = Get-ADReplicationConnection -Filter * -Server $DomainName | 
+        $replicationConnections = Get-ADReplicationConnection -Filter * | 
         ForEach-Object {
             [PSCustomObject]@{
                 FromServer    = $_.ReplicateFromDirectoryServer
@@ -21,7 +16,7 @@ function Get-ADReplicationInfo {
         }
         
         # Get replication site links
-        $siteLinks = Get-ADReplicationSiteLink -Filter * -Server $DomainName |
+        $siteLinks = Get-ADReplicationSiteLink -Filter * |
         ForEach-Object {
             [PSCustomObject]@{
                 Name                 = $_.Name
@@ -31,25 +26,27 @@ function Get-ADReplicationInfo {
             }
         }
         
-        # Get replication status
-        $replicationStatus = Get-ADReplicationPartnerMetadata -Target $DomainName -Scope Domain |
-        ForEach-Object {
-            [PSCustomObject]@{
-                Partner                = $_.Partner
-                LastReplicationAttempt = $_.LastReplicationAttempt
-                LastReplicationResult  = $_.LastReplicationResult
-                LastReplicationSuccess = $_.LastReplicationSuccess
-            }
-        }
+        # # Get replication status
+        # $replicationStatus = Get-ADReplicationPartnerMetadata -Target $DomainName -Scope Domain |
+        # ForEach-Object {
+        #     [PSCustomObject]@{
+        #         Partner                = $_.Partner
+        #         LastReplicationAttempt = $_.LastReplicationAttempt
+        #         LastReplicationResult  = $_.LastReplicationResult
+        #         LastReplicationSuccess = $_.LastReplicationSuccess
+        #     }
+        # }
         
-        return [PSCustomObject]@{
+        $replicationInfo = [PSCustomObject]@{
             Connections = $replicationConnections
             SiteLinks   = $siteLinks
-            Status      = $replicationStatus
+            # Status      = $replicationStatus
         }
+
+        return $replicationInfo
     }
     catch {
-        Write-Log "Error retrieving replication topology for $DomainName : $($_.Exception.Message)" -Level Error
+        Write-Log "Error retrieving replication topology: $($_.Exception.Message)" -Level Error
         return $null
     }
 }

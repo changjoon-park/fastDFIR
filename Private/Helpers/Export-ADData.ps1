@@ -2,10 +2,7 @@ function Export-ADData {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ObjectType,
-        
-        [Parameter(Mandatory = $true)]
-        [object]$Data, # Changed from IEnumerable to object
+        [object]$Data, 
         
         [Parameter(Mandatory = $true)]
         [string]$ExportPath
@@ -21,7 +18,7 @@ function Export-ADData {
     }
     
     $timestamp = (Get-Date -Format 'yyyyMMdd_HHmmss')
-    $exportFile = Join-Path $ExportPath ("{0}_{1}.json" -f $ObjectType, $timestamp)
+    $exportFile = Join-Path $ExportPath ("DomainInventory_{1}.json" -f $timestamp)
     
     # If $Data is not an array, just wrap it in one before converting to JSON
     if ($Data -isnot [System.Collections.IEnumerable] -or $Data -is [string]) {
@@ -31,5 +28,5 @@ function Export-ADData {
     $Data | ConvertTo-Json -Depth 10 | Out-File $exportFile
     
     $fullPath = (Resolve-Path $exportFile).Path
-    Write-Log "$ObjectType exported to $fullPath" -Level Info
+    Write-Log "Domain Inventory exported to $fullPath" -Level Info
 }

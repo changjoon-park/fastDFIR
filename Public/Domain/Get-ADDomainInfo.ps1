@@ -1,81 +1,50 @@
 function Get-ADDomainInfo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string[]]$DomainNames
-    )
-    
     try {
         Write-Log "Retrieving AD domain information..." -Level Info
-        
-        $results = foreach ($domainName in $DomainNames) {
-            try {
-                Write-Log "Attempting to access domain: $domainName" -Level Info
-                
-                $domain = Invoke-WithRetry -ScriptBlock {
-                    Get-ADDomain -Identity $domainName -ErrorAction Stop
-                }
+    
+        $domain = Invoke-WithRetry -ScriptBlock {
+            Get-ADDomain -ErrorAction Stop
+        }
 
-                # Try to get domain controllers
-                $domainControllers = try {
-                    Get-ADDomainController -Filter "Domain -eq '$domainName'" -ErrorAction Stop | 
-                    ForEach-Object {
-                        [PSCustomObject]@{
-                            HostName               = $_.HostName
-                            IPv4Address            = $_.IPv4Address
-                            Site                   = $_.Site
-                            IsGlobalCatalog        = $_.IsGlobalCatalog
-                            OperatingSystem        = $_.OperatingSystem
-                            OperatingSystemVersion = $_.OperatingSystemVersion
-                            Enabled                = $_.Enabled
-                        }
-                    }
-                }
-                catch {
-                    Write-Log "Unable to retrieve domain controllers for $domainName : $($_.Exception.Message)" -Level Warning
-                    "Access Denied or Connection Failed"
-                }
-
-                # Get OU information
-                $ouInfo = Get-ADOUInfo -DomainName $domainName
-
-                # Add this line after getting domain controllers
-                $replicationInfo = Get-ADReplicationInfo -DomainName $domainName
-
-
+        # Try to get domain controllers
+        $domainControllers = try {
+            Get-ADDomainController -Filter * -ErrorAction Stop | 
+            ForEach-Object {
                 [PSCustomObject]@{
-                    DomainName           = $domainName
-                    DomainMode           = $domain.DomainMode
-                    PDCEmulator          = $domain.PDCEmulator
-                    RIDMaster            = $domain.RIDMaster
-                    InfrastructureMaster = $domain.InfrastructureMaster
-                    DomainControllers    = $domainControllers
-                    OrganizationalUnits  = $ouInfo
-                    ReplicationTopology  = $replicationInfo
-                    AccessStatus         = "Success"
-                }
-            }
-            catch {
-                Write-Log "Failed to access domain $domainName : $($_.Exception.Message)" -Level Warning
-                
-                [PSCustomObject]@{
-                    DomainName           = $domainName
-                    DomainMode           = $null
-                    PDCEmulator          = $null
-                    RIDMaster            = $null
-                    InfrastructureMaster = $null
-                    DomainControllers    = @()
-                    OrganizationalUnits  = $null
-                    ReplicationTopology  = $null
-                    AccessStatus         = "Access Failed: $($_.Exception.Message)"
+                    HostName               = $_.HostName
+                    IPv4Address            = $_.IPv4Address
+                    Site                   = $_.Site
+                    IsGlobalCatalog        = $_.IsGlobalCatalog
+                    OperatingSystem        = $_.OperatingSystem
+                    OperatingSystemVersion = $_.OperatingSystemVersion
+                    Enabled                = $_.Enabled
                 }
             }
         }
+        catch {
+            Write-Log "Unable to retrieve domain controllers: $($_.Exception.Message)" -Level Warning
+            "Access Denied or Connection Failed"
+        }
 
-        # Export data 
-        Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath
+        # Get OU information
+        $ouInfo = Get-ADOUInfo 
 
-        return $results
+        # Add this line after getting domain controllers
+        $replicationInfo = Get-ADReplicationInfo 
+
+
+        $domainInfo = [PSCustomObject]@{
+            DomainName           = $domain.Name
+            DomainMode           = $domain.DomainMode
+            PDCEmulator          = $domain.PDCEmulator
+            RIDMaster            = $domain.RIDMaster
+            InfrastructureMaster = $domain.InfrastructureMaster
+            DomainControllers    = $domainControllers
+            OrganizationalUnits  = $ouInfo
+            ReplicationTopology  = $replicationInfo
+        }
+
+        return $domainInfo
     }
     catch {
         Write-Log "Error in Get-ADDomainInfo: $($_.Exception.Message)" -Level Error

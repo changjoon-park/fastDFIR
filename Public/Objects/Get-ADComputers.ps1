@@ -77,13 +77,6 @@ function Get-ADComputers {
             }
         }
         
-        # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $computerObjects -ObjectType $ObjectType -IncludeAccessStatus
-        $stats.DisplayStatistics()
-        
-        # Export data 
-        Export-ADData -ObjectType $ObjectType -Data $computerObjects -ExportPath $ExportPath
-        
         return $computerObjects
     }
     catch {

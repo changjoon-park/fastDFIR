@@ -8,22 +8,9 @@ function Get-ForestInventory {
     try {
         Write-Log "Retrieving comprehensive forest information..." -Level Info
 
-        $forest = Invoke-WithRetry -ScriptBlock {
-            Get-ADForest -ErrorAction Stop
-        }
-
-        $forestInfo = [PSCustomObject]@{
-            ForestRootDomain   = $forest.RootDomain
-            ForestMode         = $forest.ForestMode
-            GlobalCatalogs     = $forest.GlobalCatalogs
-            Domains            = $forest.Domains
-            SchemaMaster       = $forest.SchemaMaster
-            DomainNamingMaster = $forest.DomainNamingMaster
-        }
-
         # Get detailed information using the separate functions
-        # $trustInfo = Get-ADTrustInfo -RootDomain $forest.RootDomain # TODO: Root 도메인 말고..
-        $domainInfo = Get-ADDomainInfo -DomainNames $forest.Domains
+        $trustInfo = Get-ADTrustInfo 
+        $domainInfo = Get-ADDomainInfo 
         $siteInfo = Get-ADSiteInfo
         $policyInfo = Get-ADPolicyInfo
         $networkTopology = Get-ADNetworkTopology
