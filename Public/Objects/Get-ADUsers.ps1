@@ -31,84 +31,63 @@ function Get-ADUsers {
             Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
         }
         
-        # Get privileged groups for reference
-        $privilegedGroups = @(
-            'Domain Admins',
-            'Enterprise Admins',
-            'Schema Admins',
-            'Administrators',
-            'Account Operators',
-            'Backup Operators',
-            'Server Operators'
-        )
-        
         $users = Get-ADObjects -ObjectType $ObjectType -Objects $allUsers -ProcessingScript {
             param($user)
             
             try {
-                # Check if user is privileged
-                $isPrivileged = $false
-                $privilegedGroupMemberships = @()
-                foreach ($group in $user.MemberOf) {
-                    $groupName = (Get-ADGroup $group).Name
-                    if ($privilegedGroups -contains $groupName) {
-                        $isPrivileged = $true
-                        $privilegedGroupMemberships += $groupName
-                    }
-                }
-
                 # Check for delegated permissions
                 $delegatedPermissions = Get-ObjectDelegatedPermissions -Identity $user.DistinguishedName
 
                 # Determine account type
-                $accountType = switch -Regex ($user.DistinguishedName) {
-                    'OU=Service Accounts,' { 'ServiceAccount' }
-                    'CN=Managed Service Accounts,' { 'ManagedServiceAccount' }
-                    default { 'UserAccount' }
+                $accountType = if ($user.ServicePrincipalNames) {
+                    'ServiceAccount'
+                }
+                elseif ($user.ObjectClass -eq 'msDS-ManagedServiceAccount') {
+                    'ManagedServiceAccount'
+                }
+                elseif ($user.ObjectClass -eq 'msDS-GroupManagedServiceAccount') {
+                    'GroupManagedServiceAccount'
+                }
+                else {
+                    'UserAccount'
                 }
 
                 [PSCustomObject]@{
-                    SamAccountName             = $user.SamAccountName
-                    DisplayName                = $user.DisplayName
-                    EmailAddress               = $user.EmailAddress
-                    Enabled                    = $user.Enabled
-                    LastLogonDate              = $user.LastLogonDate
-                    PasswordLastSet            = $user.PasswordLastSet
-                    PasswordNeverExpires       = $user.PasswordNeverExpires
-                    PasswordExpired            = $user.PasswordExpired
-                    DistinguishedName          = $user.DistinguishedName
-                    AccountType                = $accountType
-                    IsPrivileged               = $isPrivileged
-                    PrivilegedGroupMemberships = $privilegedGroupMemberships
-                    DelegatedPermissions       = $delegatedPermissions
-                    AdminCount                 = $user.AdminCount
-                    AccountStatus              = if ($user.Enabled) { 
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $user.DisplayName
+                    EmailAddress         = $user.EmailAddress
+                    Enabled              = $user.Enabled
+                    LastLogonDate        = $user.LastLogonDate
+                    PasswordLastSet      = $user.PasswordLastSet
+                    PasswordNeverExpires = $user.PasswordNeverExpires
+                    PasswordExpired      = $user.PasswordExpired
+                    DistinguishedName    = $user.DistinguishedName
+                    AccountType          = $accountType
+                    DelegatedPermissions = $delegatedPermissions
+                    AccountStatus        = if ($user.Enabled) { 
                         if ($user.PasswordExpired) { "Expired" } else { "Active" }
                     }
                     else { "Disabled" }
-                    AccessStatus               = "Success"
+                    AccessStatus         = "Success"
                 }
             }
             catch {
                 Write-Log "Error processing user $($user.SamAccountName): $($_.Exception.Message)" -Level Warning
                 
                 [PSCustomObject]@{
-                    SamAccountName             = $user.SamAccountName
-                    DisplayName                = $null
-                    EmailAddress               = $null
-                    Enabled                    = $null
-                    LastLogonDate              = $null
-                    PasswordLastSet            = $null
-                    PasswordNeverExpires       = $null
-                    PasswordExpired            = $null
-                    DistinguishedName          = $user.DistinguishedName
-                    AccountType                = $null
-                    IsPrivileged               = $null
-                    PrivilegedGroupMemberships = @()
-                    DelegatedPermissions       = @()
-                    AdminCount                 = $null
-                    AccountStatus              = $null
-                    AccessStatus               = "Access Error: $($_.Exception.Message)"
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $null
+                    EmailAddress         = $null
+                    Enabled              = $null
+                    LastLogonDate        = $null
+                    PasswordLastSet      = $null
+                    PasswordNeverExpires = $null
+                    PasswordExpired      = $null
+                    DistinguishedName    = $user.DistinguishedName
+                    AccountType          = $null
+                    DelegatedPermissions = @()
+                    AccountStatus        = $null
+                    AccessStatus         = "Access Error: $($_.Exception.Message)"
                 }
             }
         }
@@ -129,7 +108,14 @@ function Get-ObjectDelegatedPermissions {
     )
     
     try {
-        $acl = Get-Acl -Path "AD:$Identity" -ErrorAction Stop
+        # Ensure the Identity is a valid Distinguished Name
+        if (-not [ADSI]::Exists("LDAP://$Identity")) {
+            throw "Invalid Distinguished Name or object not found"
+        }
+
+        $path = [ADSI]"LDAP://$Identity"
+        $acl = $path.psbase.ObjectSecurity
+
         return $acl.Access | Where-Object { 
             $_.AccessControlType -eq 'Allow' -and 
             $_.IdentityReference -notmatch 'NT AUTHORITY|BUILTIN' 
