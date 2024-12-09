@@ -1,4 +1,4 @@
-$SourceDirectory = ".\fastDFIR"
+$SourceDirectory = "."
 $OutputFile = ".\MergedScript.ps1"
 
 # Create or clear the output file

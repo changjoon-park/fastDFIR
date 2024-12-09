@@ -1,15 +1,3 @@
-# Import configuration
-$script:Config = @{
-    ExportPath          = ".\Reports"
-    LogPath             = ".\Logs"
-    MaxConcurrentJobs   = 5
-    RetryAttempts       = 3
-    RetryDelaySeconds   = 5
-    DefaultExportFormat = "JSON"
-    VerboseOutput       = $false
-    MaxQueryResults     = 10000
-}
-
 # Check and import ActiveDirectory module first
 try {
     if (-not (Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue)) {
@@ -26,12 +14,22 @@ catch {
     return
 }
 
-# Import all private functions
-Get-ChildItem -Path "$PSScriptRoot\Private\*.ps1" | ForEach-Object {
-    . $_.FullName
+# Import configuration
+. "$PSScriptRoot\Config\config.ps1"
+
+# fastDFIR.psm1
+$Public = @(Get-ChildItem -Path $PSScriptRoot\Public -Recurse -Filter "*.ps1")
+$Private = @(Get-ChildItem -Path $PSScriptRoot\Private -Recurse -Filter "*.ps1")
+
+# Dot source the files
+foreach ($import in @($Public + $Private)) {
+    try {
+        . $import.FullName
+    }
+    catch {
+        Write-Error "Failed to import function $($import.FullName): $_"
+    }
 }
 
-# Import all public functions
-Get-ChildItem -Path "$PSScriptRoot\Public\*.ps1" | ForEach-Object {
-    . $_.FullName
-}
+# Export public functions
+Export-ModuleMember -Function $Public.BaseName

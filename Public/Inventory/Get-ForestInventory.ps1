@@ -25,11 +25,17 @@ function Get-ForestInventory {
         $trustInfo = Get-ADTrustInfo -RootDomain $forest.RootDomain
         $domainInfo = Get-ADDomainInfo -DomainNames $forest.Domains
         $siteInfo = Get-ADSiteInfo
+        $policyInfo = Get-ADPolicyInfo
+        $networkTopology = Get-ADNetworkTopology
+        $securityConfig = Get-ADSecurityConfiguration
 
         # Add the detailed information to the forest object
         $forestInfo | Add-Member -MemberType NoteProperty -Name Trusts -Value $trustInfo
         $forestInfo | Add-Member -MemberType NoteProperty -Name DomainInfo -Value $domainInfo
         $forestInfo | Add-Member -MemberType NoteProperty -Name Sites -Value $siteInfo
+        $forestInfo | Add-Member -MemberType NoteProperty -Name Policies -Value $policyInfo
+        $forestInfo | Add-Member -MemberType NoteProperty -Name NetworkTopology -Value $networkTopology
+        $forestInfo | Add-Member -MemberType NoteProperty -Name SecurityConfiguration -Value $securityConfig
 
         Export-ADData -ObjectType $ObjectType -Data $forestInfo -ExportPath $ExportPath
 
