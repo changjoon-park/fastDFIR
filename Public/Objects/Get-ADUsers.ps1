@@ -63,6 +63,7 @@ function Get-ADUsers {
                     PasswordExpired      = $user.PasswordExpired
                     DistinguishedName    = $user.DistinguishedName
                     AccountType          = $accountType
+                    SID                  = $user.SID
                     DelegatedPermissions = $delegatedPermissions
                     AccountStatus        = if ($user.Enabled) { 
                         if ($user.PasswordExpired) { "Expired" } else { "Active" }
@@ -85,6 +86,7 @@ function Get-ADUsers {
                     PasswordExpired      = $null
                     DistinguishedName    = $user.DistinguishedName
                     AccountType          = $null
+                    SID                  = $null
                     DelegatedPermissions = @()
                     AccountStatus        = $null
                     AccessStatus         = "Access Error: $($_.Exception.Message)"

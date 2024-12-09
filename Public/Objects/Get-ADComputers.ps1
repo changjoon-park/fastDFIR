@@ -20,10 +20,8 @@ function Get-ADComputers {
             'Created',
             'Modified',
             'DNSHostName',
-            'ServicePrincipalNames', # Added for role detection
-            'Description',
-            'Location',
-            'primaryGroupID'          # To differentiate workstations/servers
+            'SID',
+            'ServicePrincipalNames'  # Added for service detection
         )
         
         $allComputers = Invoke-WithRetry -ScriptBlock {
@@ -34,100 +32,79 @@ function Get-ADComputers {
             param($computer)
             
             try {
-                # Determine computer type and roles
-                $computerType = switch ($computer.primaryGroupID) {
-                    515 { "Server" }
-                    516 { "Workstation" }
-                    default { "Unknown" }
-                }
+                # System Information via WMI
+                $osInfo = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $computer.DNSHostName -ErrorAction Stop
+                $sysInfo = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $computer.DNSHostName -ErrorAction Stop
+                $biosInfo = Get-WmiObject -Class Win32_BIOS -ComputerName $computer.DNSHostName -ErrorAction Stop
+                
+                # Services Status
+                $services = Get-WmiObject -Class Win32_Service -ComputerName $computer.DNSHostName -ErrorAction Stop |
+                Where-Object { $_.StartMode -eq 'Auto' } |
+                Select-Object Name, State, StartMode, StartName
+                
+                # Network Configuration
+                $networkConfig = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $computer.DNSHostName -ErrorAction Stop |
+                Where-Object { $_.IPEnabled -eq $true } |
+                Select-Object IPAddress, DefaultIPGateway, DNSServerSearchOrder, MACAddress
 
-                # Parse SPNs to detect roles
-                $roles = @()
-                foreach ($spn in $computer.ServicePrincipalNames) {
-                    switch -Regex ($spn) {
-                        'DNS|host' { $roles += "DNS Server" }
-                        'DHCP' { $roles += "DHCP Server" }
-                        'CA' { $roles += "Certificate Authority" }
-                        'MSSQL' { $roles += "SQL Server" }
-                        'IISW3SVC' { $roles += "Web Server" }
-                        'exchangeMDB' { $roles += "Exchange Server" }
-                        'WSMAN' { $roles += "Windows Management" }
-                        'FTP' { $roles += "FTP Server" }
-                        'LDAP' { $roles += "Domain Controller" }
-                        'RPCSS' { $roles += "RPC Server" }
-                        'BITS' { $roles += "BITS Server" }
-                    }
-                }
-                $roles = $roles | Select-Object -Unique
+                # Disk Information
+                $diskInfo = Get-WmiObject -Class Win32_LogicalDisk -ComputerName $computer.DNSHostName -ErrorAction Stop |
+                Where-Object { $_.DriveType -eq 3 } |
+                Select-Object DeviceID, Size, FreeSpace
 
-                # Check if it's a file server (attempt to get shares)
-                if ($computerType -eq "Server") {
-                    try {
-                        $shares = Get-WmiObject -Class Win32_Share -ComputerName $computer.DNSHostName -ErrorAction Stop
-                        if ($shares | Where-Object { $_.Type -eq 0 }) {
-                            $roles += "File Server"
-                        }
-                    }
-                    catch {
-                        Write-Log "Unable to query shares on $($computer.Name): $($_.Exception.Message)" -Level Warning
-                    }
-                }
+                # Startup Commands
+                $startupCommands = Get-WmiObject -Class Win32_StartupCommand -ComputerName $computer.DNSHostName -ErrorAction Stop |
+                Select-Object Command, Location, User
 
-                # Get additional server features if possible
-                if ($computerType -eq "Server") {
-                    try {
-                        $serverFeatures = Invoke-Command -ComputerName $computer.DNSHostName -ScriptBlock {
-                            Get-WindowsFeature | Where-Object Installed
-                        } -ErrorAction Stop
-                        
-                        foreach ($feature in $serverFeatures) {
-                            $roles += "Windows Feature: $($feature.Name)"
-                        }
-                    }
-                    catch {
-                        Write-Log "Unable to query Windows features on $($computer.Name): $($_.Exception.Message)" -Level Warning
-                    }
-                }
+                # Share Information
+                $shares = Get-WmiObject -Class Win32_Share -ComputerName $computer.DNSHostName -ErrorAction Stop |
+                Select-Object Name, Path, Description
 
                 [PSCustomObject]@{
-                    Name                       = $computer.Name
-                    DNSHostName                = $computer.DNSHostName
-                    ComputerType               = $computerType
-                    OperatingSystem            = $computer.OperatingSystem
-                    OperatingSystemVersion     = $computer.OperatingSystemVersion
-                    OperatingSystemServicePack = $computer.OperatingSystemServicePack
-                    Roles                      = $roles
-                    Enabled                    = $computer.Enabled
-                    LastLogonDate              = $computer.LastLogonDate
-                    Created                    = $computer.Created
-                    Modified                   = $computer.Modified
-                    Description                = $computer.Description
-                    Location                   = $computer.Location
-                    DistinguishedName          = $computer.DistinguishedName
-                    DomainJoined               = $true  # If it's in AD, it's domain-joined
-                    AccessStatus               = "Success"
+                    # Basic AD Info
+                    Name                   = $computer.Name
+                    DNSHostName            = $computer.DNSHostName
+                    OperatingSystem        = $computer.OperatingSystem
+                    OperatingSystemVersion = $computer.OperatingSystemVersion
+                    Enabled                = $computer.Enabled
+                    LastLogonDate          = $computer.LastLogonDate
+                    Created                = $computer.Created
+                    Modified               = $computer.Modified
+                    DistinguishedName      = $computer.DistinguishedName
+
+                    # System Details
+                    LastBootUpTime         = $osInfo.ConvertToDateTime($osInfo.LastBootUpTime)
+                    PhysicalMemory         = [math]::Round($sysInfo.TotalPhysicalMemory / 1GB, 2)
+                    Manufacturer           = $sysInfo.Manufacturer
+                    Model                  = $sysInfo.Model
+                    BIOSVersion            = $biosInfo.Version
+                    SerialNumber           = $biosInfo.SerialNumber
+
+                    # Security Info
+                    AutoStartServices      = $services
+                    NetworkConfiguration   = $networkConfig
+                    DiskInformation        = $diskInfo
+                    StartupCommands        = $startupCommands
+                    ShareInformation       = $shares
+
+                    AccessStatus           = "Success"
                 }
             }
             catch {
                 Write-Log "Error processing computer $($computer.Name): $($_.Exception.Message)" -Level Warning
                 
                 [PSCustomObject]@{
-                    Name                       = $computer.Name
-                    DNSHostName                = $null
-                    ComputerType               = "Unknown"
-                    OperatingSystem            = $null
-                    OperatingSystemVersion     = $null
-                    OperatingSystemServicePack = $null
-                    Roles                      = @()
-                    Enabled                    = $null
-                    LastLogonDate              = $null
-                    Created                    = $null
-                    Modified                   = $null
-                    Description                = $null
-                    Location                   = $null
-                    DistinguishedName          = $computer.DistinguishedName
-                    DomainJoined               = $null
-                    AccessStatus               = "Access Error: $($_.Exception.Message)"
+                    Name                   = $computer.Name
+                    DNSHostName            = $computer.DNSHostName
+                    OperatingSystem        = $computer.OperatingSystem
+                    OperatingSystemVersion = $computer.OperatingSystemVersion
+                    Enabled                = $computer.Enabled
+                    LastLogonDate          = $computer.LastLogonDate
+                    Created                = $computer.Created
+                    Modified               = $computer.Modified
+                    DistinguishedName      = $computer.DistinguishedName
+                    SID                    = $computer.SID
+                    AccessStatus           = "Access Error: $($_.Exception.Message)"
                 }
             }
         }
