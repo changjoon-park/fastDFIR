@@ -24,11 +24,11 @@ function Get-ADComputers {
             'ServicePrincipalNames'  # Added for service detection
         )
         
-        $allComputers = Invoke-WithRetry -ScriptBlock {
+        $computers = Invoke-WithRetry -ScriptBlock {
             Get-ADComputer -Filter * -Properties $properties -ErrorAction Stop
         }
         
-        $computers = Get-ADObjects -ObjectType $ObjectType -Objects $allComputers -ProcessingScript {
+        $computerObjects = Get-ADObjects -ObjectType $ObjectType -Objects $computers -ProcessingScript {
             param($computer)
             
             try {
@@ -78,13 +78,13 @@ function Get-ADComputers {
         }
         
         # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $computers -ObjectType $ObjectType -IncludeAccessStatus
+        $stats = Get-CollectionStatistics -Data $computerObjects -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
         
         # Export data 
-        Export-ADData -ObjectType $ObjectType -Data $computers -ExportPath $ExportPath
+        Export-ADData -ObjectType $ObjectType -Data $computerObjects -ExportPath $ExportPath
         
-        return $computers
+        return $computerObjects
     }
     catch {
         Write-Log "Error retrieving computers: $($_.Exception.Message)" -Level Error

@@ -22,20 +22,19 @@ function Get-ADUsers {
             'PasswordNeverExpires',
             'PasswordExpired',
             'DistinguishedName',
-            'MemberOf',
-            'SID'
+            'MemberOf'
         )
         
-        $allUsers = Invoke-WithRetry -ScriptBlock {
+        $users = Invoke-WithRetry -ScriptBlock {
             Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
         }
         
-        $users = Get-ADObjects -ObjectType $ObjectType -Objects $allUsers -ProcessingScript {
+        $userObjects = Get-ADObjects -ObjectType $ObjectType -Objects $users -ProcessingScript {
             param($user)
             
             try {
                 # Check for delegated permissions
-                $delegatedPermissions = Get-ObjectDelegatedPermissions -Identity $user.DistinguishedName
+                # $delegatedPermissions = Get-ObjectDelegatedPermissions -Identity $user.DistinguishedName
 
                 [PSCustomObject]@{
                     SamAccountName       = $user.SamAccountName
@@ -47,8 +46,8 @@ function Get-ADUsers {
                     PasswordNeverExpires = $user.PasswordNeverExpires
                     PasswordExpired      = $user.PasswordExpired
                     DistinguishedName    = $user.DistinguishedName
-                    SID                  = $user.SID
-                    DelegatedPermissions = $delegatedPermissions
+                    MemberOf             = $user.MemberOf
+                    # DelegatedPermissions = $delegatedPermissions
                     AccountStatus        = if ($user.Enabled) { 
                         if ($user.PasswordExpired) { "Expired" } else { "Active" }
                     }
@@ -78,13 +77,13 @@ function Get-ADUsers {
         }
 
         # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $users -ObjectType $ObjectType -IncludeAccessStatus
+        $stats = Get-CollectionStatistics -Data $userObjects -ObjectType $ObjectType -IncludeAccessStatus
         $stats.DisplayStatistics()
         
         # Export data 
-        Export-ADData -ObjectType $ObjectType -Data $users -ExportPath $ExportPath
+        Export-ADData -ObjectType $ObjectType -Data $userObjects -ExportPath $ExportPath
         
-        return $users
+        return $userObjects
     }
     catch {
         Write-Log "Error retrieving users: $($_.Exception.Message)" -Level Error
@@ -93,6 +92,7 @@ function Get-ADUsers {
 }
 
 # Helper function to get delegated permissions
+# TODO: takes for ages ..
 function Get-ObjectDelegatedPermissions {
     param(
         [Parameter(Mandatory)]

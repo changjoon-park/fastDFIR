@@ -59,7 +59,14 @@ function Get-ADGroupsAndMembers {
                 }
             }
         }
+
+        # Generate and display statistics
+        $stats = Get-CollectionStatistics -Data $groupObjects -ObjectType $ObjectType -IncludeAccessStatus
+        $stats.DisplayStatistics()
         
+        # Export data 
+        Export-ADData -ObjectType $ObjectType -Data $groupObjects -ExportPath $ExportPath
+
         return $groupObjects
     }
     catch {

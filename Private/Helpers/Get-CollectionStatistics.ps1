@@ -46,10 +46,10 @@ function Get-CollectionStatistics {
             Write-Host "Errors: $($this.ErrorCount)"
         }
         
-        # Write-Host "`nDistribution by OU:"
-        # $this.OUDistribution.GetEnumerator() | Sort-Object Name | ForEach-Object {
-        #     Write-Host ("  - {0,-50} : {1,5}" -f $_.Key, $_.Value)
-        # }
+        Write-Host "`nDistribution by OU:"
+        $this.OUDistribution.GetEnumerator() | Sort-Object Name | ForEach-Object {
+            Write-Host ("  - {0,-50} : {1,5}" -f $_.Key, $_.Value)
+        }
     }
     
     return $stats
