@@ -32,21 +32,10 @@ function Get-ADComputers {
             param($computer)
             
             try {
-                # $serviceTypes = @(foreach ($spn in $computer.ServicePrincipalNames) {
-                #         switch -Regex ($spn) {
-                #             'MSSQL' { 'SQL Server' }
-                #             'exchangeMDB' { 'Exchange' }
-                #             'WWW|HTTP' { 'Web Server' }
-                #             'FTP' { 'FTP Server' }
-                #             'SMTP' { 'SMTP Server' }
-                #             'DNS' { 'DNS Server' }
-                #             'LDAP' { 'Domain Controller' }
-                #         }
-                #     } | Select-Object -Unique)
-
                 [PSCustomObject]@{
                     # Basic AD Info
                     Name                   = $computer.Name
+                    IPv4Address            = $computer.IPv4Address
                     DNSHostName            = $computer.DNSHostName
                     OperatingSystem        = $computer.OperatingSystem
                     OperatingSystemVersion = $computer.OperatingSystemVersion
@@ -64,14 +53,16 @@ function Get-ADComputers {
                 
                 [PSCustomObject]@{
                     Name                   = $computer.Name
-                    DNSHostName            = $computer.DNSHostName
-                    OperatingSystem        = $computer.OperatingSystem
-                    OperatingSystemVersion = $computer.OperatingSystemVersion
-                    Enabled                = $computer.Enabled
-                    LastLogonDate          = $computer.LastLogonDate
-                    Created                = $computer.Created
-                    Modified               = $computer.Modified
+                    IPv4Address            = $null
+                    DNSHostName            = $null
+                    OperatingSystem        = $null
+                    OperatingSystemVersion = $null
+                    Enabled                = $null
+                    LastLogonDate          = $null
+                    Created                = $null
+                    Modified               = $null
                     DistinguishedName      = $computer.DistinguishedName
+                    ServicePrincipalNames  = $null
                     AccessStatus           = "Access Error: $($_.Exception.Message)"
                 }
             }

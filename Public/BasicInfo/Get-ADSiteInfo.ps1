@@ -20,35 +20,6 @@ function Get-ADSiteInfo {
                 }
             }
             
-            # Get site links
-            $siteLinks = Get-ADReplicationSiteLink -Filter *
-            # $siteLinks = Get-ADReplicationSiteLink -Filter * |
-            # Where-Object { $_.Sites -contains $site.DistinguishedName } |
-            # ForEach-Object {
-            #     [PSCustomObject]@{
-            #         Name                          = $_.Name
-            #         Cost                          = $_.Cost
-            #         ReplicationFrequencyInMinutes = $_.ReplicationFrequencyInMinutes
-            #         Schedule                      = $_.ReplicationSchedule
-            #         Sites                         = $_.Sites | ForEach-Object {
-            #             (Get-ADObject $_ -Properties Name).Name
-            #         }
-            #         Options                       = $_.Options
-            #     }
-            # }
-            
-            # Get replication connections
-            $replConnections = Get-ADReplicationConnection
-            # $replConnections = Get-ADReplicationConnection -Filter "FromServer -like '*$($site.Name)*' -or ToServer -like '*$($site.Name)*'" |
-            # ForEach-Object {
-            #     [PSCustomObject]@{
-            #         FromServer = $_.FromServer
-            #         ToServer   = $_.ToServer
-            #         Schedule   = $_.Schedule
-            #         Options    = $_.Options
-            #     }
-            # }
-
             # Create the site object with all information
             [PSCustomObject]@{
                 Name                   = $site.Name
@@ -57,8 +28,8 @@ function Get-ADSiteInfo {
                 Created                = $site.Created
                 Modified               = $site.Modified
                 Subnets                = $subnets
-                SiteLinks              = $siteLinks
-                ReplicationConnections = $replConnections
+                SiteLinks              = (Get-ADReplicationSiteLink -Filter *)
+                ReplicationConnections = Get-ADReplicationConnection
                 DistinguishedName      = $site.DistinguishedName
             }
         }

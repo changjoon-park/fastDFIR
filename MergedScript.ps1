@@ -1,41 +1,13 @@
-# Merged Script - Created 2024-12-10 08:48:09
+# Merged Script - Created 2024-12-10 20:51:28
 
 
 #region MergedScript.ps1
 
-# Merged Script - Created 2024-12-10 08:48:09
+# Merged Script - Created 2024-12-10 20:51:28
 
 
 #region MergedScript.ps1
 
-
-#endregion
-
-
-#region mergeScript.ps1
-
-$SourceDirectory = "."
-$OutputFile = ".\MergedScript.ps1"
-
-# Create or clear the output file
-Set-Content -Path $OutputFile -Value "# Merged Script - Created $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n"
-
-# Get all ps1 files recursively
-$files = Get-ChildItem -Path $SourceDirectory -Filter "*.ps1" -Recurse
-
-foreach ($file in $files) {
-    # Add a header comment for each file
-    Add-Content -Path $OutputFile -Value "`n#region $($file.Name)`n"
-    
-    # Get the content and add it to the merged file
-    $content = Get-Content -Path $file.FullName
-    Add-Content -Path $OutputFile -Value $content
-    
-    # Add an end region marker
-    Add-Content -Path $OutputFile -Value "`n#endregion`n"
-}
-
-Write-Host "Merged $($files.Count) files into $OutputFile"
 
 #endregion
 
@@ -60,12 +32,6 @@ $script:Config = @{
 #region Get-ADPolicyInfo.ps1
 
 function Get-ADPolicyInfo {
-    [CmdletBinding()]
-    param(
-        [string]$ObjectType = "Policies",
-        [string]$ExportPath = $script:Config.ExportPath
-    )
-    
     try {
         Write-Log "Retrieving AD policy information..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing policy retrieval..."
@@ -135,9 +101,6 @@ function Get-ADPolicyInfo {
             DefaultLockoutPolicy        = $lockoutPolicies
             FineGrainedPasswordPolicies = $fgppPolicies
         }
-
-        # Export data
-        Export-ADData -ObjectType $ObjectType -Data $policyInfo -ExportPath $ExportPath
 
         return $policyInfo
     }
@@ -232,12 +195,6 @@ function Get-AuditPolicyFromGPO {
 #region Get-ADSecurityConfiguration.ps1
 
 function Get-ADSecurityConfiguration {
-    [CmdletBinding()]
-    param(
-        [string]$ObjectType = "SecurityConfig",
-        [string]$ExportPath = $script:Config.ExportPath
-    )
-    
     try {
         Write-Log "Retrieving AD security configuration..." -Level Info
 
@@ -245,11 +202,7 @@ function Get-ADSecurityConfiguration {
             ObjectACLs       = Get-CriticalObjectACLs
             FileShareACLs    = Get-CriticalShareACLs
             SPNConfiguration = Get-SPNConfiguration
-            KerberosSettings = Get-KerberosConfiguration
         }
-
-        # Export data
-        Export-ADData -ObjectType $ObjectType -Data $securityConfig -ExportPath $ExportPath
         
         return $securityConfig
     }
@@ -263,27 +216,16 @@ function Get-CriticalObjectACLs {
     try {
         Write-Log "Collecting ACLs for critical AD objects..." -Level Info
         
-        # Get domain root
-        $domain = Get-ADDomain
-        
-        # Critical paths to check
-        $criticalPaths = @(
-            $domain.DistinguishedName, # Domain root
-            "CN=Users,$($domain.DistinguishedName)", # Users container
-            "CN=Computers,$($domain.DistinguishedName)", # Computers container
-            "CN=System,$($domain.DistinguishedName)"      # System container
-        )
-        
         # Get all OUs
         $ous = Get-ADOrganizationalUnit -Filter *
-        $criticalPaths += $ous.DistinguishedName
         
-        $acls = foreach ($path in $criticalPaths) {
+        $acls = foreach ($ou in $ous) {
             try {
-                $acl = Get-Acl -Path "AD:$path"
+                $acl = Get-Acl -Path "AD:$ou"
                 
                 [PSCustomObject]@{
-                    Path        = $path
+                    OU          = $ou.Name
+                    Path        = $ou.path
                     Owner       = $acl.Owner
                     AccessRules = $acl.Access | ForEach-Object {
                         [PSCustomObject]@{
@@ -324,7 +266,7 @@ function Get-CriticalShareACLs {
                     ShareName   = $share
                     Path        = $path
                     Owner       = $acl.Owner
-                    AccessRules = $acl.Access | ForEach-Object {
+                    AccessRules = $acl.AccessRules | ForEach-Object {
                         [PSCustomObject]@{
                             Principal  = $_.IdentityReference.Value
                             AccessType = $_.AccessControlType.ToString()
@@ -381,40 +323,79 @@ function Get-SPNConfiguration {
     }
 }
 
-function Get-KerberosConfiguration {
+#endregion
+
+
+#region Get-ADDomainInfo.ps1
+
+function Get-ADDomainInfo {
     try {
-        Write-Log "Collecting Kerberos configuration..." -Level Info
-        
-        # Get domain controller
-        $dc = Get-ADDomainController
-        
-        # Get Kerberos policy
-        $kerbPolicy = Get-GPObject -Name "Default Domain Policy" | 
-        Get-GPOReport -ReportType Xml | 
-        Select-Xml -XPath "//SecurityOptions/SecurityOption[contains(Name, 'Kerberos')]"
-        
-        # Get additional Kerberos settings from registry
-        $regSettings = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
-            Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters"
+        Write-Log "Retrieving AD domain information..." -Level Info
+    
+        $domain = Invoke-WithRetry -ScriptBlock {
+            Get-ADDomain -ErrorAction Stop
         }
-        
-        return [PSCustomObject]@{
-            MaxTicketAge              = $regSettings.MaxTicketAge
-            MaxRenewAge               = $regSettings.MaxRenewAge
-            MaxServiceAge             = $regSettings.MaxServiceAge
-            MaxClockSkew              = $regSettings.MaxClockSkew
-            PreAuthenticationRequired = $kerbPolicy.Node.SettingBoolean
-            PolicySettings            = $kerbPolicy | ForEach-Object {
+
+        # Try to get domain controllers
+        $domainControllers = try {
+            Get-ADDomainController -Filter * -ErrorAction Stop | 
+            ForEach-Object {
                 [PSCustomObject]@{
-                    Setting = $_.Node.Name
-                    State   = $_.Node.State
-                    Value   = $_.Node.SettingNumber
+                    HostName               = $_.HostName
+                    IPv4Address            = $_.IPv4Address
+                    Site                   = $_.Site
+                    IsGlobalCatalog        = $_.IsGlobalCatalog
+                    OperatingSystem        = $_.OperatingSystem
+                    OperatingSystemVersion = $_.OperatingSystemVersion
+                    Enabled                = $_.Enabled
                 }
             }
         }
+        catch {
+            Write-Log "Unable to retrieve domain controllers: $($_.Exception.Message)" -Level Warning
+            "Access Denied or Connection Failed"
+        }
+
+        $domainInfo = [PSCustomObject]@{
+            DomainName           = $domain.Name
+            DomainMode           = $domain.DomainMode
+            PDCEmulator          = $domain.PDCEmulator
+            RIDMaster            = $domain.RIDMaster
+            InfrastructureMaster = $domain.InfrastructureMaster
+            DomainControllers    = $domainControllers
+            OrganizationalUnits  = Get-ADOUInfo
+        }
+
+        return $domainInfo
     }
     catch {
-        Write-Log "Error collecting Kerberos configuration: $($_.Exception.Message)" -Level Error
+        Write-Log "Error in Get-ADDomainInfo: $($_.Exception.Message)" -Level Error
+        return $null
+    }
+}
+
+function Get-ADOUInfo {
+    
+    try {
+        Write-Log "Retrieving OU information for domain:..." -Level Info
+        
+        $ous = Get-ADOrganizationalUnit -Filter * -Properties * -ErrorAction Stop
+        
+        $ouInfo = foreach ($ou in $ous) {
+            [PSCustomObject]@{
+                Name              = $ou.Name
+                DistinguishedName = $ou.DistinguishedName
+                Description       = $ou.Description
+                Created           = $ou.Created
+                Modified          = $ou.Modified
+                ChildOUs          = ($ou.DistinguishedName -split ',OU=' | Select-Object -Skip 1) -join ',OU='
+            }
+        }
+        
+        return $ouInfo
+    }
+    catch {
+        Write-Log "Error retrieving OU information for: $($_.Exception.Message)" -Level Error
         return $null
     }
 }
@@ -422,57 +403,32 @@ function Get-KerberosConfiguration {
 #endregion
 
 
-#region Get-ADDNSInfo.ps1
+#region Get-ADForestInfo.ps1
 
-function Get-ADDNSInfo {
-    [CmdletBinding()]
-    param()
-    
+function Get-ADForestInfo {
     try {
-        $dnsServer = Get-ADDomainController -Discover | Select-Object -ExpandProperty HostName
+        Write-Log "Retrieving AD forest information..." -Level Info
         
-        # Get all DNS zones
-        $zones = Get-DnsServerZone -ComputerName $dnsServer | ForEach-Object {
-            $zone = $_
-            
-            # Get all records for this zone
-            $records = Get-DnsServerResourceRecord -ComputerName $dnsServer -ZoneName $zone.ZoneName |
-            ForEach-Object {
-                [PSCustomObject]@{
-                    Name       = $_.HostName
-                    RecordType = $_.RecordType
-                    RecordData = $_.RecordData.IPv4Address ?? 
-                    $_.RecordData.HostNameAlias ??
-                    $_.RecordData.DomainName ??
-                    $_.RecordData.StringData
-                    Timestamp  = $_.Timestamp
-                    TimeToLive = $_.TimeToLive
-                }
-            }
-            
-            # Special handling for SRV records
-            $srvRecords = $records | Where-Object RecordType -eq 'SRV'
-            
+        $forestInfo = Get-ADForest -ErrorAction SilentlyContinue | 
+        ForEach-Object {
             [PSCustomObject]@{
-                ZoneName               = $zone.ZoneName
-                ZoneType               = $zone.ZoneType
-                IsDsIntegrated         = $zone.IsDsIntegrated
-                IsReverseLookupZone    = $zone.IsReverseLookupZone
-                DynamicUpdate          = $zone.DynamicUpdate
-                Records                = $records
-                ServiceRecords         = $srvRecords
-                ReplicationScope       = $zone.ReplicationScope
-                DirectoryPartitionName = $zone.DirectoryPartitionName
+                Name                = $_.Name
+                ForestMode          = $_.ForestMode
+                SchemaMaster        = $_.SchemaMaster
+                DomainNamingMaster  = $_.DomainNamingMaster
+                GlobalCatalogs      = $_.GlobalCatalogs
+                Sites               = $_.Sites
+                Domains             = $_.Domains
+                RootDomain          = $_.RootDomain
+                SchemaNamingContext = $_.SchemaNamingContext
+                DistinguishedName   = $_.DistinguishedName
             }
         }
-        
-        return [PSCustomObject]@{
-            ForwardLookupZones = $zones | Where-Object { -not $_.IsReverseLookupZone }
-            ReverseLookupZones = $zones | Where-Object IsReverseLookupZone
-        }
+
+        return $forestInfo
     }
     catch {
-        Write-Log "Error retrieving DNS information: $($_.Exception.Message)" -Level Error
+        Write-Log "Error retrieving trust information: $($_.Exception.Message)" -Level Error
         return $null
     }
 }
@@ -489,44 +445,78 @@ function Get-ADSiteInfo {
     try {
         Write-Log "Retrieving AD site information..." -Level Info
         
-        Get-ADReplicationSite -Filter * -ErrorAction SilentlyContinue | 
+        # Get all sites
+        $sites = Get-ADReplicationSite -Filter * -ErrorAction SilentlyContinue | 
         ForEach-Object {
             $site = $_
-            $subnets = Get-ADReplicationSubnet -Filter * -ErrorAction SilentlyContinue | 
-            Where-Object { $_.Site -eq $site.DistinguishedName } |
+            
+            # Get subnets for this site
+            $subnets = Get-ADReplicationSubnet -Filter "site -eq '$($site.DistinguishedName)'" | 
             ForEach-Object {
                 [PSCustomObject]@{
                     Name        = $_.Name
-                    Site        = $_.Site
                     Location    = $_.Location
                     Description = $_.Description
                 }
             }
-
-            $siteLinks = Get-ADReplicationSiteLink -Filter * -ErrorAction SilentlyContinue |
-            Where-Object { $_.Sites -contains $site.DistinguishedName } |
-            ForEach-Object {
-                [PSCustomObject]@{
-                    Name                          = $_.Name
-                    Cost                          = $_.Cost
-                    ReplicationFrequencyInMinutes = $_.ReplicationFrequencyInMinutes
-                    Sites                         = $_.Sites
-                }
-            }
-
+            
+            # Create the site object with all information
             [PSCustomObject]@{
-                SiteName    = $site.Name
-                Description = $site.Description
-                Location    = $site.Location
-                Subnets     = $subnets
-                SiteLinks   = $siteLinks
-                Created     = $site.Created
-                Modified    = $site.Modified
+                Name                   = $site.Name
+                Description            = $site.Description
+                Location               = $site.Location
+                Created                = $site.Created
+                Modified               = $site.Modified
+                Subnets                = $subnets
+                SiteLinks              = (Get-ADReplicationSiteLink -Filter *)
+                ReplicationConnections = Get-ADReplicationConnection
+                DistinguishedName      = $site.DistinguishedName
+            }
+        }
+
+        # Create a summary object that includes overall topology information
+        $siteTopology = [PSCustomObject]@{
+            Sites                = $sites
+            TotalSites           = ($sites | Measure-Object).Count
+            TotalSubnets         = ($sites.Subnets | Measure-Object).Count
+            TotalSiteLinks       = ($sites.SiteLinks | Sort-Object -Property Name -Unique | Measure-Object).Count
+            TotalReplConnections = ($sites.ReplicationConnections | Measure-Object).Count
+        }
+
+        return $siteTopology
+    }
+    catch {
+        Write-Log "Error retrieving site information: $($_.Exception.Message)" -Level Error
+        return $null
+    }
+}
+
+#endregion
+
+
+#region Get-ADTrustInfo.ps1
+
+function Get-ADTrustInfo {
+    try {
+        Write-Log "Retrieving AD trust information..." -Level Info
+        
+        Get-ADTrust -Filter * -ErrorAction SilentlyContinue | 
+        ForEach-Object {
+            [PSCustomObject]@{
+                Name               = $_.Name
+                Source             = $_.Source
+                Target             = $_.Target
+                TrustType          = $_.TrustType
+                Direction          = $_.Direction
+                DisallowTransivity = $_.DisallowTransivity
+                InstraForest       = $_.InstraForest
+                TGTQuota           = $_.TGTQuota
+                DistinguishedName  = $_.DistinguishedName
             }
         }
     }
     catch {
-        Write-Log "Error retrieving site information: $($_.Exception.Message)" -Level Error
+        Write-Log "Error retrieving trust information: $($_.Exception.Message)" -Level Error
         return $null
     }
 }
@@ -570,21 +560,10 @@ function Get-ADComputers {
             param($computer)
             
             try {
-                # $serviceTypes = @(foreach ($spn in $computer.ServicePrincipalNames) {
-                #         switch -Regex ($spn) {
-                #             'MSSQL' { 'SQL Server' }
-                #             'exchangeMDB' { 'Exchange' }
-                #             'WWW|HTTP' { 'Web Server' }
-                #             'FTP' { 'FTP Server' }
-                #             'SMTP' { 'SMTP Server' }
-                #             'DNS' { 'DNS Server' }
-                #             'LDAP' { 'Domain Controller' }
-                #         }
-                #     } | Select-Object -Unique)
-
                 [PSCustomObject]@{
                     # Basic AD Info
                     Name                   = $computer.Name
+                    IPv4Address            = $computer.IPv4Address
                     DNSHostName            = $computer.DNSHostName
                     OperatingSystem        = $computer.OperatingSystem
                     OperatingSystemVersion = $computer.OperatingSystemVersion
@@ -602,14 +581,16 @@ function Get-ADComputers {
                 
                 [PSCustomObject]@{
                     Name                   = $computer.Name
-                    DNSHostName            = $computer.DNSHostName
-                    OperatingSystem        = $computer.OperatingSystem
-                    OperatingSystemVersion = $computer.OperatingSystemVersion
-                    Enabled                = $computer.Enabled
-                    LastLogonDate          = $computer.LastLogonDate
-                    Created                = $computer.Created
-                    Modified               = $computer.Modified
+                    IPv4Address            = $null
+                    DNSHostName            = $null
+                    OperatingSystem        = $null
+                    OperatingSystemVersion = $null
+                    Enabled                = $null
+                    LastLogonDate          = $null
+                    Created                = $null
+                    Modified               = $null
                     DistinguishedName      = $computer.DistinguishedName
+                    ServicePrincipalNames  = $null
                     AccessStatus           = "Access Error: $($_.Exception.Message)"
                 }
             }
@@ -736,7 +717,7 @@ function Get-ADUsers {
         
         $userObjects = Get-ADObjects -ObjectType $ObjectType -Objects $users -ProcessingScript {
             param($user)
-            
+
             try {
                 [PSCustomObject]@{
                     SamAccountName       = $user.SamAccountName
@@ -788,352 +769,54 @@ function Get-ADUsers {
 #endregion
 
 
-#region Get-DomainInventory.ps1
+#region Get-DomainReport.ps1
 
-function Get-DomainInventory {
+function Get-DomainReport {
     [CmdletBinding()]
     param(
         [ValidateScript({ Test-Path $_ })]
         [string]$ExportPath = $script:Config.ExportPath
     )
-    
-    if (-not (Initialize-Environment)) {
-        Write-Log "Environment initialization failed" -Level Error
-        return
-    }
-    
-    $startTime = Get-Date
-    Write-Log "Starting AD Inventory at $startTime" -Level Info
-    
+
     try {
-        # Domain Information
-        $domainInfo = [PSCustomObject]@{
+        # Basic Domain Information
+        $basicInfo = [PSCustomObject]@{
             ForestInfo = Get-ADForestInfo
             TrustInfo  = Get-ADTrustInfo
+            Sites      = Get-ADSiteInfo
             DomainInfo = Get-ADDomainInfo
         }
 
-        Export-ADData -Data $domainInfo -ExportPath $ExportPath
-
-        # Domain Objects
-        $domainObject = [PSCustomObject]@{
-            ADUsers     = Get-ADUsers
-            ADComputers = Get-ADComputers
-            ADGroups    = Get-ADGroupsAndMembers
+        # Domain Objects Information
+        $domainObjects = [PSCustomObject]@{
+            Users     = Get-ADUsers
+            Computers = Get-ADComputers
+            Groups    = Get-ADGroupsAndMembers
         }
 
-        Export-ADData -Data $domainObject -ExportPath $ExportPath
+        # Security Configuration
+        $Security = [PSCustomObject]@{
+            # Policies           = Get-ADPolicyInfo # TODO: Permission Denied
+            SecurityConfig = Get-ADSecurityConfiguration
+        }
+
+        # Final combined object
+        $domainReport = [PSCustomObject]@{
+            CollectionTime   = Get-Date
+            BasicInfo        = $basicInfo
+            DomainObjects    = $domainObjects
+            SecuritySettings = $Security
+            # Statistics       = Get-CollectionStatistics -Data $domainObjects
+        }
+
+        # TODO: Implement Export-ADData function (Add-member to $domainReport)
+        # Export-ADData -Data $domainReport -ExportPath $ExportPath
+
+        return $domainReport
     }
     catch {
-        Write-Log "Error during inventory: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Error during inventory process"
-    }
-
-    $endTime = Get-Date
-    $duration = $endTime - $startTime
-    Write-Log "AD Inventory completed. Duration: $($duration.TotalMinutes) minutes" -Level Info
-}
-
-#endregion
-
-
-#region Get-ForestInventory.ps1
-
-function Get-ForestInventory {
-    [CmdletBinding()]
-    param(
-        [string]$ObjectType = "ForestInfo",
-        [string]$ExportPath = $script:Config.ExportPath
-    )
-    
-    try {
-        Write-Log "Retrieving comprehensive forest information..." -Level Info
-
-        # Get detailed information using the separate functions
-        $trustInfo = Get-ADTrustInfo 
-        $domainInfo = Get-ADDomainInfo 
-        $siteInfo = Get-ADSiteInfo
-        $policyInfo = Get-ADPolicyInfo
-        $networkTopology = Get-ADNetworkTopology
-        $securityConfig = Get-ADSecurityConfiguration
-
-        # Add the detailed information to the forest object
-        $forestInfo | Add-Member -MemberType NoteProperty -Name Trusts -Value $trustInfo
-        $forestInfo | Add-Member -MemberType NoteProperty -Name DomainInfo -Value $domainInfo
-        $forestInfo | Add-Member -MemberType NoteProperty -Name Sites -Value $siteInfo
-        $forestInfo | Add-Member -MemberType NoteProperty -Name Policies -Value $policyInfo
-        $forestInfo | Add-Member -MemberType NoteProperty -Name NetworkTopology -Value $networkTopology
-        $forestInfo | Add-Member -MemberType NoteProperty -Name SecurityConfiguration -Value $securityConfig
-
-        Export-ADData -ObjectType $ObjectType -Data $forestInfo -ExportPath $ExportPath
-
-        return $forestInfo
-    }
-    catch {
-        Write-Log "Failed to retrieve forest information: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Insufficient permissions or unable to retrieve forest info."
-        return $null
-    }
-}
-
-#endregion
-
-
-#region Get-NetworkInventory.ps1
-
-
-#endregion
-
-
-#region Get-ADDomainInfo.ps1
-
-function Get-ADDomainInfo {
-    try {
-        Write-Log "Retrieving AD domain information..." -Level Info
-    
-        $domain = Invoke-WithRetry -ScriptBlock {
-            Get-ADDomain -ErrorAction Stop
-        }
-
-        # Try to get domain controllers
-        $domainControllers = try {
-            Get-ADDomainController -Filter * -ErrorAction Stop | 
-            ForEach-Object {
-                [PSCustomObject]@{
-                    HostName               = $_.HostName
-                    IPv4Address            = $_.IPv4Address
-                    Site                   = $_.Site
-                    IsGlobalCatalog        = $_.IsGlobalCatalog
-                    OperatingSystem        = $_.OperatingSystem
-                    OperatingSystemVersion = $_.OperatingSystemVersion
-                    Enabled                = $_.Enabled
-                }
-            }
-        }
-        catch {
-            Write-Log "Unable to retrieve domain controllers: $($_.Exception.Message)" -Level Warning
-            "Access Denied or Connection Failed"
-        }
-
-        # Get OU information
-        $ouInfo = Get-ADOUInfo 
-
-        # TODO
-        # # Add this line after getting domain controllers
-        # $replicationInfo = Get-ADReplicationInfo 
-
-
-        $domainInfo = [PSCustomObject]@{
-            DomainName           = $domain.Name
-            DomainMode           = $domain.DomainMode
-            PDCEmulator          = $domain.PDCEmulator
-            RIDMaster            = $domain.RIDMaster
-            InfrastructureMaster = $domain.InfrastructureMaster
-            DomainControllers    = $domainControllers
-            OrganizationalUnits  = $ouInfo
-            # ReplicationTopology  = $replicationInfo
-        }
-
-        return $domainInfo
-    }
-    catch {
-        Write-Log "Error in Get-ADDomainInfo: $($_.Exception.Message)" -Level Error
-        return $null
-    }
-}
-
-#endregion
-
-
-#region Get-ADForestInfo.ps1
-
-function Get-ADForestInfo {
-    try {
-        Write-Log "Retrieving AD forest information..." -Level Info
-        
-        $forestInfo = Get-ADForest -ErrorAction SilentlyContinue | 
-        ForEach-Object {
-            [PSCustomObject]@{
-                Name                = $_.Name
-                ForestMode          = $_.ForestMode
-                SchemaMaster        = $_.SchemaMaster
-                DomainNamingMaster  = $_.DomainNamingMaster
-                GlobalCatalogs      = $_.GlobalCatalogs
-                Sites               = $_.Sites
-                Domains             = $_.Domains
-                RootDomain          = $_.RootDomain
-                SchemaNamingContext = $_.SchemaNamingContext
-                DistinguishedName   = $_.DistinguishedName
-            }
-        }
-
-        return $forestInfo
-    }
-    catch {
-        Write-Log "Error retrieving trust information: $($_.Exception.Message)" -Level Error
-        return $null
-    }
-}
-
-#endregion
-
-
-#region Get-ADNetworkTopology.ps1
-
-function Get-ADNetworkTopology {
-    [CmdletBinding()]
-    param(
-        [string]$ObjectType = "NetworkTopology",
-        [string]$ExportPath = $script:Config.ExportPath
-    )
-    
-    try {
-        Write-Log "Retrieving network topology information..." -Level Info
-        
-        # Get Sites and Subnets
-        $siteInfo = Get-ADSiteTopology
-        
-        # Get DNS Zones
-        $dnsInfo = Get-ADDNSInfo
-        
-        $networkTopology = [PSCustomObject]@{
-            Sites    = $siteInfo
-            DNSZones = $dnsInfo
-        }
-        
-        # Export data
-        Export-ADData -ObjectType $ObjectType -Data $networkTopology -ExportPath $ExportPath
-        
-        return $networkTopology
-    }
-    catch {
-        Write-Log "Error retrieving network topology: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve network topology information. Check permissions."
-    }
-}
-
-function Get-ADSiteTopology {
-    [CmdletBinding()]
-    param()
-    
-    try {
-        $sites = Get-ADReplicationSite -Filter * | ForEach-Object {
-            $site = $_
-            
-            # Get subnets for this site
-            $subnets = Get-ADReplicationSubnet -Filter "site -eq '$($site.DistinguishedName)'" | 
-            ForEach-Object {
-                [PSCustomObject]@{
-                    Name        = $_.Name
-                    Location    = $_.Location
-                    Description = $_.Description
-                }
-            }
-            
-            # Get site links
-            $siteLinks = Get-ADReplicationSiteLink -Filter * |
-            Where-Object { $_.Sites -contains $site.DistinguishedName } |
-            ForEach-Object {
-                [PSCustomObject]@{
-                    Name                 = $_.Name
-                    Cost                 = $_.Cost
-                    ReplicationFrequency = $_.ReplicationFrequencyInMinutes
-                    Schedule             = $_.ReplicationSchedule
-                    Sites                = $_.Sites | ForEach-Object {
-                        (Get-ADObject $_ -Properties Name).Name
-                    }
-                    Options              = $_.Options
-                }
-            }
-            
-            # Get replication connections
-            $replConnections = Get-ADReplicationConnection -Filter "FromServer -like '*$($site.Name)*' -or ToServer -like '*$($site.Name)*'" |
-            ForEach-Object {
-                [PSCustomObject]@{
-                    FromServer = $_.FromServer
-                    ToServer   = $_.ToServer
-                    Schedule   = $_.Schedule
-                    Options    = $_.Options
-                }
-            }
-            
-            [PSCustomObject]@{
-                Name                   = $site.Name
-                Description            = $site.Description
-                Location               = $site.Location
-                Subnets                = $subnets
-                SiteLinks              = $siteLinks
-                ReplicationConnections = $replConnections
-            }
-        }
-        
-        return $sites
-    }
-    catch {
-        Write-Log "Error retrieving site topology: $($_.Exception.Message)" -Level Error
-        return $null
-    }
-}
-
-
-#endregion
-
-
-#region Get-ADOUInfo.ps1
-
-function Get-ADOUInfo {
-    
-    try {
-        Write-Log "Retrieving OU information for domain:..." -Level Info
-        
-        $ous = Get-ADOrganizationalUnit -Filter * -Properties * -ErrorAction Stop
-        
-        $ouInfo = foreach ($ou in $ous) {
-            [PSCustomObject]@{
-                Name              = $ou.Name
-                DistinguishedName = $ou.DistinguishedName
-                Description       = $ou.Description
-                Created           = $ou.Created
-                Modified          = $ou.Modified
-                ChildOUs          = ($ou.DistinguishedName -split ',OU=' | Select-Object -Skip 1) -join ',OU='
-            }
-        }
-        
-        return $ouInfo
-    }
-    catch {
-        Write-Log "Error retrieving OU information for: $($_.Exception.Message)" -Level Error
-        return $null
-    }
-}
-
-#endregion
-
-
-#region Get-ADTrustInfo.ps1
-
-function Get-ADTrustInfo {
-    try {
-        Write-Log "Retrieving AD trust information..." -Level Info
-        
-        Get-ADTrust -Filter * -ErrorAction SilentlyContinue | 
-        ForEach-Object {
-            [PSCustomObject]@{
-                Name               = $_.Name
-                Source             = $_.Source
-                Target             = $_.Target
-                TrustType          = $_.TrustType
-                Direction          = $_.Direction
-                DisallowTransivity = $_.DisallowTransivity
-                InstraForest       = $_.InstraForest
-                TGTQuota           = $_.TGTQuota
-                DistinguishedName  = $_.DistinguishedName
-            }
-        }
-    }
-    catch {
-        Write-Log "Error retrieving trust information: $($_.Exception.Message)" -Level Error
-        return $null
+        Write-Log "Error in Get-DomainReport: $($_.Exception.Message)" -Level Error
+        throw
     }
 }
 

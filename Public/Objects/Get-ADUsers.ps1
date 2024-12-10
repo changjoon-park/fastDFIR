@@ -31,7 +31,7 @@ function Get-ADUsers {
         
         $userObjects = Get-ADObjects -ObjectType $ObjectType -Objects $users -ProcessingScript {
             param($user)
-            
+
             try {
                 [PSCustomObject]@{
                     SamAccountName       = $user.SamAccountName
