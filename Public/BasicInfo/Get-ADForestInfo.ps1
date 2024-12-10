@@ -4,7 +4,7 @@ function Get-ADForestInfo {
         
         $forestInfo = Get-ADForest -ErrorAction SilentlyContinue | 
         ForEach-Object {
-            [PSCustomObject]@{
+            $info = [PSCustomObject]@{
                 Name                = $_.Name
                 ForestMode          = $_.ForestMode
                 SchemaMaster        = $_.SchemaMaster
@@ -16,6 +16,13 @@ function Get-ADForestInfo {
                 SchemaNamingContext = $_.SchemaNamingContext
                 DistinguishedName   = $_.DistinguishedName
             }
+            
+            # Add ToString method
+            Add-Member -InputObject $info -MemberType ScriptMethod -Name "ToString" -Value {
+                "Name=$($this.Name); ForestMode=$($this.ForestMode); SchemaMaster=$($this.SchemaMaster); GlobalCatalogs=$($this.GlobalCatalogs.Count); Domains=$($this.Domains.Count)"
+            }
+            
+            $info
         }
 
         return $forestInfo

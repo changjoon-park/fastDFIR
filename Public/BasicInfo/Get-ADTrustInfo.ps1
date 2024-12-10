@@ -2,9 +2,9 @@ function Get-ADTrustInfo {
     try {
         Write-Log "Retrieving AD trust information..." -Level Info
         
-        Get-ADTrust -Filter * -ErrorAction SilentlyContinue | 
+        $trustInfo = Get-ADTrust -Filter * -ErrorAction SilentlyContinue | 
         ForEach-Object {
-            [PSCustomObject]@{
+            $info = [PSCustomObject]@{
                 Name               = $_.Name
                 Source             = $_.Source
                 Target             = $_.Target
@@ -15,7 +15,16 @@ function Get-ADTrustInfo {
                 TGTQuota           = $_.TGTQuota
                 DistinguishedName  = $_.DistinguishedName
             }
+            
+            # Add ToString method
+            Add-Member -InputObject $info -MemberType ScriptMethod -Name "ToString" -Value {
+                "Name=$($this.Name); Source=$($this.Source); Target=$($this.Target); TrustType=$($this.TrustType); Direction=$($this.Direction)"
+            }
+            
+            $info
         }
+
+        return $trustInfo
     }
     catch {
         Write-Log "Error retrieving trust information: $($_.Exception.Message)" -Level Error

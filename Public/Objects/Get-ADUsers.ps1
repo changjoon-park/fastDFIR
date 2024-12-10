@@ -33,7 +33,7 @@ function Get-ADUsers {
             param($user)
 
             try {
-                [PSCustomObject]@{
+                $userObject = [PSCustomObject]@{
                     SamAccountName       = $user.SamAccountName
                     DisplayName          = $user.DisplayName
                     EmailAddress         = $user.EmailAddress
@@ -50,11 +50,16 @@ function Get-ADUsers {
                     else { "Disabled" }
                     AccessStatus         = "Success"
                 }
+
+                Add-Member -InputObject $userObject -MemberType ScriptMethod -Name "ToString" -Value {
+                    "SamAccountName=$($this.SamAccountName); Status=$($this.AccountStatus); Groups=$($this.MemberOf.Count)"
+                }
+
+                $userObject
             }
             catch {
                 Write-Log "Error processing user $($user.SamAccountName): $($_.Exception.Message)" -Level Warning
-                
-                [PSCustomObject]@{
+                $userObject = [PSCustomObject]@{
                     SamAccountName       = $user.SamAccountName
                     DisplayName          = $null
                     EmailAddress         = $null
@@ -64,11 +69,16 @@ function Get-ADUsers {
                     PasswordNeverExpires = $null
                     PasswordExpired      = $null
                     DistinguishedName    = $user.DistinguishedName
-                    SID                  = $null
-                    DelegatedPermissions = @()
-                    AccountStatus        = $null
+                    MemberOf             = @()
+                    AccountStatus        = "Error"
                     AccessStatus         = "Access Error: $($_.Exception.Message)"
                 }
+
+                Add-Member -InputObject $userObject -MemberType ScriptMethod -Name "ToString" -Value {
+                    "SamAccountName=$($this.SamAccountName); Status=Error; Groups=0"
+                }
+
+                $userObject
             }
         }
 

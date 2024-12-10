@@ -29,11 +29,11 @@ function Get-ADGroupsAndMembers {
             param($group)
             
             try {
-                [PSCustomObject]@{
+                $groupObject = [PSCustomObject]@{
                     Name                   = $group.Name
                     Description            = $group.Description
-                    GroupCategory          = $group.GroupCategory  # Security or Distribution
-                    GroupScope             = $group.GroupScope       # Universal, Global, DomainLocal
+                    GroupCategory          = $group.GroupCategory
+                    GroupScope             = $group.GroupScope
                     TotalNestedMemberCount = $group.Members.Count
                     Members                = $group.Members
                     Created                = $group.Created
@@ -41,11 +41,17 @@ function Get-ADGroupsAndMembers {
                     DistinguishedName      = $group.DistinguishedName
                     AccessStatus           = "Success"
                 }
+
+                Add-Member -InputObject $groupObject -MemberType ScriptMethod -Name "ToString" -Value {
+                    "Name=$($this.Name); Category=$($this.GroupCategory); Scope=$($this.GroupScope); Members=$($this.TotalNestedMemberCount)"
+                }
+
+                $groupObject
             }
             catch {
                 Write-Log "Error processing group $($group.Name): $($_.Exception.Message)" -Level Warning
                 
-                [PSCustomObject]@{
+                $groupObject = [PSCustomObject]@{
                     Name                   = $group.Name
                     Description            = $group.Description
                     GroupCategory          = $group.GroupCategory
@@ -57,6 +63,12 @@ function Get-ADGroupsAndMembers {
                     DistinguishedName      = $group.DistinguishedName
                     AccessStatus           = "Access Error: $($_.Exception.Message)"
                 }
+
+                Add-Member -InputObject $groupObject -MemberType ScriptMethod -Name "ToString" -Value {
+                    "Name=$($this.Name); Status=Error"
+                }
+
+                $groupObject
             }
         }
 

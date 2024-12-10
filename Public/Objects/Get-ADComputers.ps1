@@ -21,7 +21,7 @@ function Get-ADComputers {
             'Modified',
             'DNSHostName',
             'SID',
-            'ServicePrincipalNames'  # Added for service detection
+            'ServicePrincipalNames'
         )
         
         $computers = Invoke-WithRetry -ScriptBlock {
@@ -32,8 +32,7 @@ function Get-ADComputers {
             param($computer)
             
             try {
-                [PSCustomObject]@{
-                    # Basic AD Info
+                $computerObject = [PSCustomObject]@{
                     Name                   = $computer.Name
                     IPv4Address            = $computer.IPv4Address
                     DNSHostName            = $computer.DNSHostName
@@ -47,11 +46,17 @@ function Get-ADComputers {
                     ServicePrincipalNames  = $computer.ServicePrincipalNames
                     AccessStatus           = "Success"
                 }
+
+                Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
+                    "Name=$($this.Name); OS=$($this.OperatingSystem); Enabled=$($this.Enabled); SPNs=$($this.ServicePrincipalNames.Count)"
+                }
+
+                $computerObject
             }
             catch {
                 Write-Log "Error processing computer $($computer.Name): $($_.Exception.Message)" -Level Warning
                 
-                [PSCustomObject]@{
+                $computerObject = [PSCustomObject]@{
                     Name                   = $computer.Name
                     IPv4Address            = $null
                     DNSHostName            = $null
@@ -65,6 +70,12 @@ function Get-ADComputers {
                     ServicePrincipalNames  = $null
                     AccessStatus           = "Access Error: $($_.Exception.Message)"
                 }
+
+                Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
+                    "Name=$($this.Name); Status=Error"
+                }
+
+                $computerObject
             }
         }
         

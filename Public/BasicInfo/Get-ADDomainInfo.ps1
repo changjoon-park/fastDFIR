@@ -36,6 +36,11 @@ function Get-ADDomainInfo {
             OrganizationalUnits  = Get-ADOUInfo
         }
 
+        # Add ToString method to domainInfo
+        Add-Member -InputObject $domainInfo -MemberType ScriptMethod -Name "ToString" -Value {
+            "DomainName=$($this.DomainName); DomainMode=$($this.DomainMode); PDCEmulator=$($this.PDCEmulator); InfrastructureMaster=$($this.InfrastructureMaster); DCs=$($this.DomainControllers.Count); OUs=$($this.OrganizationalUnits.Count)"
+        }
+
         return $domainInfo
     }
     catch {
@@ -45,14 +50,13 @@ function Get-ADDomainInfo {
 }
 
 function Get-ADOUInfo {
-    
     try {
         Write-Log "Retrieving OU information for domain:..." -Level Info
         
         $ous = Get-ADOrganizationalUnit -Filter * -Properties * -ErrorAction Stop
         
         $ouInfo = foreach ($ou in $ous) {
-            [PSCustomObject]@{
+            $ouObject = [PSCustomObject]@{
                 Name              = $ou.Name
                 DistinguishedName = $ou.DistinguishedName
                 Description       = $ou.Description
@@ -60,6 +64,13 @@ function Get-ADOUInfo {
                 Modified          = $ou.Modified
                 ChildOUs          = ($ou.DistinguishedName -split ',OU=' | Select-Object -Skip 1) -join ',OU='
             }
+
+            # Add ToString method to each OU object
+            Add-Member -InputObject $ouObject -MemberType ScriptMethod -Name "ToString" -Value {
+                "Name=$($this.Name); DN=$($this.DistinguishedName); Children=$($this.ChildOUs.Split(',').Count)"
+            }
+
+            $ouObject
         }
         
         return $ouInfo

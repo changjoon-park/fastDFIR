@@ -8,6 +8,11 @@ function Get-ADSecurityConfiguration {
             SPNConfiguration = Get-SPNConfiguration
         }
         
+        # Add ToString method to securityConfig
+        Add-Member -InputObject $securityConfig -MemberType ScriptMethod -Name "ToString" -Value {
+            "ObjectACLs=$($this.ObjectACLs.Count); FileShareACLs=$($this.FileShareACLs.Count); SPNs=$($this.SPNConfiguration.Count)"
+        }
+        
         return $securityConfig
     }
     catch {
@@ -27,7 +32,7 @@ function Get-CriticalObjectACLs {
             try {
                 $acl = Get-Acl -Path "AD:$ou"
                 
-                [PSCustomObject]@{
+                $aclObject = [PSCustomObject]@{
                     OU          = $ou.Name
                     Path        = $ou.path
                     Owner       = $acl.Owner
@@ -40,6 +45,13 @@ function Get-CriticalObjectACLs {
                         }
                     }
                 }
+
+                # Add ToString method to each ACL object
+                Add-Member -InputObject $aclObject -MemberType ScriptMethod -Name "ToString" -Value {
+                    "OU=$($this.OU); Owner=$($this.Owner); Rules=$($this.AccessRules.Count)"
+                }
+
+                $aclObject
             }
             catch {
                 Write-Log "Error getting ACL for $path : $($_.Exception.Message)" -Level Warning
@@ -66,7 +78,7 @@ function Get-CriticalShareACLs {
                 $path = "\\$($dc.HostName)\$share"
                 $acl = Get-Acl -Path $path
                 
-                [PSCustomObject]@{
+                $shareAclObject = [PSCustomObject]@{
                     ShareName   = $share
                     Path        = $path
                     Owner       = $acl.Owner
@@ -79,6 +91,13 @@ function Get-CriticalShareACLs {
                         }
                     }
                 }
+
+                # Add ToString method to each share ACL object
+                Add-Member -InputObject $shareAclObject -MemberType ScriptMethod -Name "ToString" -Value {
+                    "Share=$($this.ShareName); Owner=$($this.Owner); Rules=$($this.AccessRules.Count)"
+                }
+
+                $shareAclObject
             }
             catch {
                 Write-Log "Error getting ACL for $share : $($_.Exception.Message)" -Level Warning
@@ -102,12 +121,19 @@ function Get-SPNConfiguration {
         Where-Object { $_.ServicePrincipalNames.Count -gt 0 }
         
         $spnConfig = foreach ($user in $spnUsers) {
-            [PSCustomObject]@{
+            $spnObject = [PSCustomObject]@{
                 UserName    = $user.SamAccountName
                 Enabled     = $user.Enabled
                 SPNs        = $user.ServicePrincipalNames
                 IsDuplicate = $false  # Will be checked later
             }
+
+            # Add ToString method to each SPN config object
+            Add-Member -InputObject $spnObject -MemberType ScriptMethod -Name "ToString" -Value {
+                "User=$($this.UserName); Enabled=$($this.Enabled); SPNCount=$($this.SPNs.Count); Duplicate=$($this.IsDuplicate)"
+            }
+
+            $spnObject
         }
         
         # Check for duplicate SPNs
