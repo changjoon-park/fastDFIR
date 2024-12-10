@@ -1,10 +1,4 @@
 function Get-ADSecurityConfiguration {
-    [CmdletBinding()]
-    param(
-        [string]$ObjectType = "SecurityConfig",
-        [string]$ExportPath = $script:Config.ExportPath
-    )
-    
     try {
         Write-Log "Retrieving AD security configuration..." -Level Info
 
@@ -13,9 +7,6 @@ function Get-ADSecurityConfiguration {
             FileShareACLs    = Get-CriticalShareACLs
             SPNConfiguration = Get-SPNConfiguration
         }
-
-        # Export data
-        Export-ADData -ObjectType $ObjectType -Data $securityConfig -ExportPath $ExportPath
         
         return $securityConfig
     }

@@ -10,6 +10,7 @@ function Get-DomainReport {
         $basicInfo = [PSCustomObject]@{
             ForestInfo = Get-ADForestInfo
             TrustInfo  = Get-ADTrustInfo
+            Sites      = Get-ADSiteInfo
             DomainInfo = Get-ADDomainInfo
         }
 
@@ -26,29 +27,23 @@ function Get-DomainReport {
             SecurityConfig = Get-ADSecurityConfiguration
         }
 
-        # Infrastructure Information
-        $Infrastructure = [PSCustomObject]@{
-            Sites = Get-ADSiteInfo
-            # DNSInfo         = Get-ADDNSInfo  # TODO: Permission Denied
-        }
-
         # Final combined object
-        $domainInformation = [PSCustomObject]@{
+        $domainReport = [PSCustomObject]@{
             CollectionTime   = Get-Date
-            BasicInformation = $basicInfo
+            BasicInfo        = $basicInfo
             DomainObjects    = $domainObjects
             SecuritySettings = $Security
             Infrastructure   = $Infrastructure
             # Statistics       = Get-CollectionStatistics -Data $domainObjects
         }
 
-        # Export if requested
-        Export-ADData -Data $domainInformation -ExportPath $ExportPath
+        # TODO: Implement Export-ADData function (Add-member to $domainReport)
+        # Export-ADData -Data $domainReport -ExportPath $ExportPath
 
-        return $domainInformation
+        return $domainReport
     }
     catch {
-        Write-Log "Error in Get-DomainInformation: $($_.Exception.Message)" -Level Error
+        Write-Log "Error in Get-DomainReport: $($_.Exception.Message)" -Level Error
         throw
     }
 }
