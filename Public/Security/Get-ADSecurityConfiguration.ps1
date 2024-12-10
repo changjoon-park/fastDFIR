@@ -12,7 +12,6 @@ function Get-ADSecurityConfiguration {
             ObjectACLs       = Get-CriticalObjectACLs
             FileShareACLs    = Get-CriticalShareACLs
             SPNConfiguration = Get-SPNConfiguration
-            KerberosSettings = Get-KerberosConfiguration
         }
 
         # Export data
@@ -30,27 +29,16 @@ function Get-CriticalObjectACLs {
     try {
         Write-Log "Collecting ACLs for critical AD objects..." -Level Info
         
-        # Get domain root
-        $domain = Get-ADDomain
-        
-        # Critical paths to check
-        $criticalPaths = @(
-            $domain.DistinguishedName, # Domain root
-            "CN=Users,$($domain.DistinguishedName)", # Users container
-            "CN=Computers,$($domain.DistinguishedName)", # Computers container
-            "CN=System,$($domain.DistinguishedName)"      # System container
-        )
-        
         # Get all OUs
         $ous = Get-ADOrganizationalUnit -Filter *
-        $criticalPaths += $ous.DistinguishedName
         
-        $acls = foreach ($path in $criticalPaths) {
+        $acls = foreach ($ou in $ous) {
             try {
-                $acl = Get-Acl -Path "AD:$path"
+                $acl = Get-Acl -Path "AD:$ou"
                 
                 [PSCustomObject]@{
-                    Path        = $path
+                    OU          = $ou.Name
+                    Path        = $ou.path
                     Owner       = $acl.Owner
                     AccessRules = $acl.Access | ForEach-Object {
                         [PSCustomObject]@{
@@ -91,7 +79,7 @@ function Get-CriticalShareACLs {
                     ShareName   = $share
                     Path        = $path
                     Owner       = $acl.Owner
-                    AccessRules = $acl.Access | ForEach-Object {
+                    AccessRules = $acl.AccessRules | ForEach-Object {
                         [PSCustomObject]@{
                             Principal  = $_.IdentityReference.Value
                             AccessType = $_.AccessControlType.ToString()
@@ -144,44 +132,6 @@ function Get-SPNConfiguration {
     }
     catch {
         Write-Log "Error collecting SPN configuration: $($_.Exception.Message)" -Level Error
-        return $null
-    }
-}
-
-function Get-KerberosConfiguration {
-    try {
-        Write-Log "Collecting Kerberos configuration..." -Level Info
-        
-        # Get domain controller
-        $dc = Get-ADDomainController
-        
-        # Get Kerberos policy
-        $kerbPolicy = Get-GPObject -Name "Default Domain Policy" | 
-        Get-GPOReport -ReportType Xml | 
-        Select-Xml -XPath "//SecurityOptions/SecurityOption[contains(Name, 'Kerberos')]"
-        
-        # Get additional Kerberos settings from registry
-        $regSettings = Invoke-Command -ComputerName $dc.HostName -ScriptBlock {
-            Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters"
-        }
-        
-        return [PSCustomObject]@{
-            MaxTicketAge              = $regSettings.MaxTicketAge
-            MaxRenewAge               = $regSettings.MaxRenewAge
-            MaxServiceAge             = $regSettings.MaxServiceAge
-            MaxClockSkew              = $regSettings.MaxClockSkew
-            PreAuthenticationRequired = $kerbPolicy.Node.SettingBoolean
-            PolicySettings            = $kerbPolicy | ForEach-Object {
-                [PSCustomObject]@{
-                    Setting = $_.Node.Name
-                    State   = $_.Node.State
-                    Value   = $_.Node.SettingNumber
-                }
-            }
-        }
-    }
-    catch {
-        Write-Log "Error collecting Kerberos configuration: $($_.Exception.Message)" -Level Error
         return $null
     }
 }

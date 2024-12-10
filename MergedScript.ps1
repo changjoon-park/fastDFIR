@@ -1,9 +1,9 @@
-# Merged Script - Created 2024-12-09 14:08:36
+# Merged Script - Created 2024-12-10 08:48:09
 
 
 #region MergedScript.ps1
 
-# Merged Script - Created 2024-12-09 14:08:36
+# Merged Script - Created 2024-12-10 08:48:09
 
 
 #region MergedScript.ps1
@@ -480,6 +480,504 @@ function Get-ADDNSInfo {
 #endregion
 
 
+#region Get-ADSiteInfo.ps1
+
+function Get-ADSiteInfo {
+    [CmdletBinding()]
+    param()
+    
+    try {
+        Write-Log "Retrieving AD site information..." -Level Info
+        
+        Get-ADReplicationSite -Filter * -ErrorAction SilentlyContinue | 
+        ForEach-Object {
+            $site = $_
+            $subnets = Get-ADReplicationSubnet -Filter * -ErrorAction SilentlyContinue | 
+            Where-Object { $_.Site -eq $site.DistinguishedName } |
+            ForEach-Object {
+                [PSCustomObject]@{
+                    Name        = $_.Name
+                    Site        = $_.Site
+                    Location    = $_.Location
+                    Description = $_.Description
+                }
+            }
+
+            $siteLinks = Get-ADReplicationSiteLink -Filter * -ErrorAction SilentlyContinue |
+            Where-Object { $_.Sites -contains $site.DistinguishedName } |
+            ForEach-Object {
+                [PSCustomObject]@{
+                    Name                          = $_.Name
+                    Cost                          = $_.Cost
+                    ReplicationFrequencyInMinutes = $_.ReplicationFrequencyInMinutes
+                    Sites                         = $_.Sites
+                }
+            }
+
+            [PSCustomObject]@{
+                SiteName    = $site.Name
+                Description = $site.Description
+                Location    = $site.Location
+                Subnets     = $subnets
+                SiteLinks   = $siteLinks
+                Created     = $site.Created
+                Modified    = $site.Modified
+            }
+        }
+    }
+    catch {
+        Write-Log "Error retrieving site information: $($_.Exception.Message)" -Level Error
+        return $null
+    }
+}
+
+#endregion
+
+
+#region Get-ADComputers.ps1
+
+function Get-ADComputers {
+    [CmdletBinding()]
+    param(
+        [string]$ObjectType = "Computers",
+        [string]$ExportPath = $script:Config.ExportPath
+    )
+    
+    try {
+        Write-Log "Retrieving computer accounts..." -Level Info
+        Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing computer retrieval..."
+        
+        $properties = @(
+            'Name',
+            'DistinguishedName',
+            'OperatingSystem',
+            'OperatingSystemVersion',
+            'OperatingSystemServicePack',
+            'Enabled',
+            'LastLogonDate',
+            'Created',
+            'Modified',
+            'DNSHostName',
+            'SID',
+            'ServicePrincipalNames'  # Added for service detection
+        )
+        
+        $computers = Invoke-WithRetry -ScriptBlock {
+            Get-ADComputer -Filter * -Properties $properties -ErrorAction Stop
+        }
+        
+        $computerObjects = Get-ADObjects -ObjectType $ObjectType -Objects $computers -ProcessingScript {
+            param($computer)
+            
+            try {
+                # $serviceTypes = @(foreach ($spn in $computer.ServicePrincipalNames) {
+                #         switch -Regex ($spn) {
+                #             'MSSQL' { 'SQL Server' }
+                #             'exchangeMDB' { 'Exchange' }
+                #             'WWW|HTTP' { 'Web Server' }
+                #             'FTP' { 'FTP Server' }
+                #             'SMTP' { 'SMTP Server' }
+                #             'DNS' { 'DNS Server' }
+                #             'LDAP' { 'Domain Controller' }
+                #         }
+                #     } | Select-Object -Unique)
+
+                [PSCustomObject]@{
+                    # Basic AD Info
+                    Name                   = $computer.Name
+                    DNSHostName            = $computer.DNSHostName
+                    OperatingSystem        = $computer.OperatingSystem
+                    OperatingSystemVersion = $computer.OperatingSystemVersion
+                    Enabled                = $computer.Enabled
+                    LastLogonDate          = $computer.LastLogonDate
+                    Created                = $computer.Created
+                    Modified               = $computer.Modified
+                    DistinguishedName      = $computer.DistinguishedName
+                    ServicePrincipalNames  = $computer.ServicePrincipalNames
+                    AccessStatus           = "Success"
+                }
+            }
+            catch {
+                Write-Log "Error processing computer $($computer.Name): $($_.Exception.Message)" -Level Warning
+                
+                [PSCustomObject]@{
+                    Name                   = $computer.Name
+                    DNSHostName            = $computer.DNSHostName
+                    OperatingSystem        = $computer.OperatingSystem
+                    OperatingSystemVersion = $computer.OperatingSystemVersion
+                    Enabled                = $computer.Enabled
+                    LastLogonDate          = $computer.LastLogonDate
+                    Created                = $computer.Created
+                    Modified               = $computer.Modified
+                    DistinguishedName      = $computer.DistinguishedName
+                    AccessStatus           = "Access Error: $($_.Exception.Message)"
+                }
+            }
+        }
+        
+        return $computerObjects
+    }
+    catch {
+        Write-Log "Error retrieving computers: $($_.Exception.Message)" -Level Error
+        Show-ErrorBox "Unable to retrieve computer accounts. Check permissions."
+    }
+}
+
+#endregion
+
+
+#region Get-ADGroupsAndMembers.ps1
+
+function Get-ADGroupsAndMembers {
+    [CmdletBinding()]
+    param(
+        [string]$ObjectType = "Groups",
+        [string]$ExportPath = $script:Config.ExportPath
+    )
+    
+    try {
+        Write-Log "Retrieving groups and members..." -Level Info
+        Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing group retrieval..."
+        
+        $properties = @(
+            'Name',
+            'Description',
+            'GroupCategory',
+            'GroupScope',
+            'Members',
+            'MemberOf',
+            'DistinguishedName',
+            'Created',
+            'Modified'
+        )
+
+        $groups = Invoke-WithRetry -ScriptBlock {
+            Get-ADGroup -Filter * -Properties $properties -ErrorAction Stop
+        }
+        
+        $groupObjects = Get-ADObjects -ObjectType $ObjectType -Objects $groups -ProcessingScript {
+            param($group)
+            
+            try {
+                [PSCustomObject]@{
+                    Name                   = $group.Name
+                    Description            = $group.Description
+                    GroupCategory          = $group.GroupCategory  # Security or Distribution
+                    GroupScope             = $group.GroupScope       # Universal, Global, DomainLocal
+                    TotalNestedMemberCount = $group.Members.Count
+                    Members                = $group.Members
+                    Created                = $group.Created
+                    Modified               = $group.Modified
+                    DistinguishedName      = $group.DistinguishedName
+                    AccessStatus           = "Success"
+                }
+            }
+            catch {
+                Write-Log "Error processing group $($group.Name): $($_.Exception.Message)" -Level Warning
+                
+                [PSCustomObject]@{
+                    Name                   = $group.Name
+                    Description            = $group.Description
+                    GroupCategory          = $group.GroupCategory
+                    GroupScope             = $group.GroupScope
+                    TotalNestedMemberCount = 0
+                    Members                = @()
+                    Created                = $group.Created
+                    Modified               = $group.Modified
+                    DistinguishedName      = $group.DistinguishedName
+                    AccessStatus           = "Access Error: $($_.Exception.Message)"
+                }
+            }
+        }
+
+        return $groupObjects
+    }
+    catch {
+        Write-Log "Error retrieving groups: $($_.Exception.Message)" -Level Error
+        Show-ErrorBox "Unable to retrieve groups. Check permissions."
+    }
+}
+
+#endregion
+
+
+#region Get-ADUsers.ps1
+
+function Get-ADUsers {
+    [CmdletBinding()]
+    param(
+        [string]$ObjectType = "Users",
+        [string]$ExportPath = $script:Config.ExportPath,
+        [switch]$IncludeDisabled
+    )
+    
+    try {
+        Write-Log "Retrieving user accounts..." -Level Info
+        Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing user retrieval..."
+        
+        $filter = if ($IncludeDisabled) { "*" } else { "Enabled -eq 'True'" }
+        
+        $properties = @(
+            'SamAccountName',
+            'DisplayName',
+            'EmailAddress',
+            'Enabled',
+            'LastLogonDate',
+            'PasswordLastSet',
+            'PasswordNeverExpires',
+            'PasswordExpired',
+            'DistinguishedName',
+            'MemberOf'
+        )
+        
+        $users = Invoke-WithRetry -ScriptBlock {
+            Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
+        }
+        
+        $userObjects = Get-ADObjects -ObjectType $ObjectType -Objects $users -ProcessingScript {
+            param($user)
+            
+            try {
+                [PSCustomObject]@{
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $user.DisplayName
+                    EmailAddress         = $user.EmailAddress
+                    Enabled              = $user.Enabled
+                    LastLogonDate        = $user.LastLogonDate
+                    PasswordLastSet      = $user.PasswordLastSet
+                    PasswordNeverExpires = $user.PasswordNeverExpires
+                    PasswordExpired      = $user.PasswordExpired
+                    DistinguishedName    = $user.DistinguishedName
+                    MemberOf             = $user.MemberOf
+                    AccountStatus        = if ($user.Enabled) { 
+                        if ($user.PasswordExpired) { "Expired" } else { "Active" }
+                    }
+                    else { "Disabled" }
+                    AccessStatus         = "Success"
+                }
+            }
+            catch {
+                Write-Log "Error processing user $($user.SamAccountName): $($_.Exception.Message)" -Level Warning
+                
+                [PSCustomObject]@{
+                    SamAccountName       = $user.SamAccountName
+                    DisplayName          = $null
+                    EmailAddress         = $null
+                    Enabled              = $null
+                    LastLogonDate        = $null
+                    PasswordLastSet      = $null
+                    PasswordNeverExpires = $null
+                    PasswordExpired      = $null
+                    DistinguishedName    = $user.DistinguishedName
+                    SID                  = $null
+                    DelegatedPermissions = @()
+                    AccountStatus        = $null
+                    AccessStatus         = "Access Error: $($_.Exception.Message)"
+                }
+            }
+        }
+
+        return $userObjects
+    }
+    catch {
+        Write-Log "Error retrieving users: $($_.Exception.Message)" -Level Error
+        Show-ErrorBox "Unable to retrieve users. Check permissions."
+    }
+}
+
+#endregion
+
+
+#region Get-DomainInventory.ps1
+
+function Get-DomainInventory {
+    [CmdletBinding()]
+    param(
+        [ValidateScript({ Test-Path $_ })]
+        [string]$ExportPath = $script:Config.ExportPath
+    )
+    
+    if (-not (Initialize-Environment)) {
+        Write-Log "Environment initialization failed" -Level Error
+        return
+    }
+    
+    $startTime = Get-Date
+    Write-Log "Starting AD Inventory at $startTime" -Level Info
+    
+    try {
+        # Domain Information
+        $domainInfo = [PSCustomObject]@{
+            ForestInfo = Get-ADForestInfo
+            TrustInfo  = Get-ADTrustInfo
+            DomainInfo = Get-ADDomainInfo
+        }
+
+        Export-ADData -Data $domainInfo -ExportPath $ExportPath
+
+        # Domain Objects
+        $domainObject = [PSCustomObject]@{
+            ADUsers     = Get-ADUsers
+            ADComputers = Get-ADComputers
+            ADGroups    = Get-ADGroupsAndMembers
+        }
+
+        Export-ADData -Data $domainObject -ExportPath $ExportPath
+    }
+    catch {
+        Write-Log "Error during inventory: $($_.Exception.Message)" -Level Error
+        Show-ErrorBox "Error during inventory process"
+    }
+
+    $endTime = Get-Date
+    $duration = $endTime - $startTime
+    Write-Log "AD Inventory completed. Duration: $($duration.TotalMinutes) minutes" -Level Info
+}
+
+#endregion
+
+
+#region Get-ForestInventory.ps1
+
+function Get-ForestInventory {
+    [CmdletBinding()]
+    param(
+        [string]$ObjectType = "ForestInfo",
+        [string]$ExportPath = $script:Config.ExportPath
+    )
+    
+    try {
+        Write-Log "Retrieving comprehensive forest information..." -Level Info
+
+        # Get detailed information using the separate functions
+        $trustInfo = Get-ADTrustInfo 
+        $domainInfo = Get-ADDomainInfo 
+        $siteInfo = Get-ADSiteInfo
+        $policyInfo = Get-ADPolicyInfo
+        $networkTopology = Get-ADNetworkTopology
+        $securityConfig = Get-ADSecurityConfiguration
+
+        # Add the detailed information to the forest object
+        $forestInfo | Add-Member -MemberType NoteProperty -Name Trusts -Value $trustInfo
+        $forestInfo | Add-Member -MemberType NoteProperty -Name DomainInfo -Value $domainInfo
+        $forestInfo | Add-Member -MemberType NoteProperty -Name Sites -Value $siteInfo
+        $forestInfo | Add-Member -MemberType NoteProperty -Name Policies -Value $policyInfo
+        $forestInfo | Add-Member -MemberType NoteProperty -Name NetworkTopology -Value $networkTopology
+        $forestInfo | Add-Member -MemberType NoteProperty -Name SecurityConfiguration -Value $securityConfig
+
+        Export-ADData -ObjectType $ObjectType -Data $forestInfo -ExportPath $ExportPath
+
+        return $forestInfo
+    }
+    catch {
+        Write-Log "Failed to retrieve forest information: $($_.Exception.Message)" -Level Error
+        Show-ErrorBox "Insufficient permissions or unable to retrieve forest info."
+        return $null
+    }
+}
+
+#endregion
+
+
+#region Get-NetworkInventory.ps1
+
+
+#endregion
+
+
+#region Get-ADDomainInfo.ps1
+
+function Get-ADDomainInfo {
+    try {
+        Write-Log "Retrieving AD domain information..." -Level Info
+    
+        $domain = Invoke-WithRetry -ScriptBlock {
+            Get-ADDomain -ErrorAction Stop
+        }
+
+        # Try to get domain controllers
+        $domainControllers = try {
+            Get-ADDomainController -Filter * -ErrorAction Stop | 
+            ForEach-Object {
+                [PSCustomObject]@{
+                    HostName               = $_.HostName
+                    IPv4Address            = $_.IPv4Address
+                    Site                   = $_.Site
+                    IsGlobalCatalog        = $_.IsGlobalCatalog
+                    OperatingSystem        = $_.OperatingSystem
+                    OperatingSystemVersion = $_.OperatingSystemVersion
+                    Enabled                = $_.Enabled
+                }
+            }
+        }
+        catch {
+            Write-Log "Unable to retrieve domain controllers: $($_.Exception.Message)" -Level Warning
+            "Access Denied or Connection Failed"
+        }
+
+        # Get OU information
+        $ouInfo = Get-ADOUInfo 
+
+        # TODO
+        # # Add this line after getting domain controllers
+        # $replicationInfo = Get-ADReplicationInfo 
+
+
+        $domainInfo = [PSCustomObject]@{
+            DomainName           = $domain.Name
+            DomainMode           = $domain.DomainMode
+            PDCEmulator          = $domain.PDCEmulator
+            RIDMaster            = $domain.RIDMaster
+            InfrastructureMaster = $domain.InfrastructureMaster
+            DomainControllers    = $domainControllers
+            OrganizationalUnits  = $ouInfo
+            # ReplicationTopology  = $replicationInfo
+        }
+
+        return $domainInfo
+    }
+    catch {
+        Write-Log "Error in Get-ADDomainInfo: $($_.Exception.Message)" -Level Error
+        return $null
+    }
+}
+
+#endregion
+
+
+#region Get-ADForestInfo.ps1
+
+function Get-ADForestInfo {
+    try {
+        Write-Log "Retrieving AD forest information..." -Level Info
+        
+        $forestInfo = Get-ADForest -ErrorAction SilentlyContinue | 
+        ForEach-Object {
+            [PSCustomObject]@{
+                Name                = $_.Name
+                ForestMode          = $_.ForestMode
+                SchemaMaster        = $_.SchemaMaster
+                DomainNamingMaster  = $_.DomainNamingMaster
+                GlobalCatalogs      = $_.GlobalCatalogs
+                Sites               = $_.Sites
+                Domains             = $_.Domains
+                RootDomain          = $_.RootDomain
+                SchemaNamingContext = $_.SchemaNamingContext
+                DistinguishedName   = $_.DistinguishedName
+            }
+        }
+
+        return $forestInfo
+    }
+    catch {
+        Write-Log "Error retrieving trust information: $($_.Exception.Message)" -Level Error
+        return $null
+    }
+}
+
+#endregion
+
+
 #region Get-ADNetworkTopology.ps1
 
 function Get-ADNetworkTopology {
@@ -581,735 +1079,30 @@ function Get-ADSiteTopology {
 #endregion
 
 
-#region Get-ADSiteInfo.ps1
-
-function Get-ADSiteInfo {
-    [CmdletBinding()]
-    param()
-    
-    try {
-        Write-Log "Retrieving AD site information..." -Level Info
-        
-        Get-ADReplicationSite -Filter * -ErrorAction SilentlyContinue | 
-        ForEach-Object {
-            $site = $_
-            $subnets = Get-ADReplicationSubnet -Filter * -ErrorAction SilentlyContinue | 
-            Where-Object { $_.Site -eq $site.DistinguishedName } |
-            ForEach-Object {
-                [PSCustomObject]@{
-                    Name        = $_.Name
-                    Site        = $_.Site
-                    Location    = $_.Location
-                    Description = $_.Description
-                }
-            }
-
-            $siteLinks = Get-ADReplicationSiteLink -Filter * -ErrorAction SilentlyContinue |
-            Where-Object { $_.Sites -contains $site.DistinguishedName } |
-            ForEach-Object {
-                [PSCustomObject]@{
-                    Name                          = $_.Name
-                    Cost                          = $_.Cost
-                    ReplicationFrequencyInMinutes = $_.ReplicationFrequencyInMinutes
-                    Sites                         = $_.Sites
-                }
-            }
-
-            [PSCustomObject]@{
-                SiteName    = $site.Name
-                Description = $site.Description
-                Location    = $site.Location
-                Subnets     = $subnets
-                SiteLinks   = $siteLinks
-                Created     = $site.Created
-                Modified    = $site.Modified
-            }
-        }
-    }
-    catch {
-        Write-Log "Error retrieving site information: $($_.Exception.Message)" -Level Error
-        return $null
-    }
-}
-
-#endregion
-
-
-#region Get-ADComputers.ps1
-
-function Get-ADComputers {
-    [CmdletBinding()]
-    param(
-        [string]$ObjectType = "Computers",
-        [string]$ExportPath = $script:Config.ExportPath
-    )
-    
-    try {
-        Write-Log "Retrieving computer accounts..." -Level Info
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing computer retrieval..."
-        
-        $properties = @(
-            'Name',
-            'DistinguishedName',
-            'OperatingSystem',
-            'OperatingSystemVersion',
-            'OperatingSystemServicePack',
-            'Enabled',
-            'LastLogonDate',
-            'Created',
-            'Modified',
-            'DNSHostName',
-            'SID',
-            'ServicePrincipalNames'  # Added for service detection
-        )
-        
-        $allComputers = Invoke-WithRetry -ScriptBlock {
-            Get-ADComputer -Filter * -Properties $properties -ErrorAction Stop
-        }
-        
-        $computers = Get-ADObjects -ObjectType $ObjectType -Objects $allComputers -ProcessingScript {
-            param($computer)
-            
-            try {
-                # System Information via WMI
-                $osInfo = Get-WmiObject -Class Win32_OperatingSystem -ComputerName $computer.DNSHostName -ErrorAction Stop
-                $sysInfo = Get-WmiObject -Class Win32_ComputerSystem -ComputerName $computer.DNSHostName -ErrorAction Stop
-                $biosInfo = Get-WmiObject -Class Win32_BIOS -ComputerName $computer.DNSHostName -ErrorAction Stop
-                
-                # Services Status
-                $services = Get-WmiObject -Class Win32_Service -ComputerName $computer.DNSHostName -ErrorAction Stop |
-                Where-Object { $_.StartMode -eq 'Auto' } |
-                Select-Object Name, State, StartMode, StartName
-                
-                # Network Configuration
-                $networkConfig = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -ComputerName $computer.DNSHostName -ErrorAction Stop |
-                Where-Object { $_.IPEnabled -eq $true } |
-                Select-Object IPAddress, DefaultIPGateway, DNSServerSearchOrder, MACAddress
-
-                # Disk Information
-                $diskInfo = Get-WmiObject -Class Win32_LogicalDisk -ComputerName $computer.DNSHostName -ErrorAction Stop |
-                Where-Object { $_.DriveType -eq 3 } |
-                Select-Object DeviceID, Size, FreeSpace
-
-                # Startup Commands
-                $startupCommands = Get-WmiObject -Class Win32_StartupCommand -ComputerName $computer.DNSHostName -ErrorAction Stop |
-                Select-Object Command, Location, User
-
-                # Share Information
-                $shares = Get-WmiObject -Class Win32_Share -ComputerName $computer.DNSHostName -ErrorAction Stop |
-                Select-Object Name, Path, Description
-
-                [PSCustomObject]@{
-                    # Basic AD Info
-                    Name                   = $computer.Name
-                    DNSHostName            = $computer.DNSHostName
-                    OperatingSystem        = $computer.OperatingSystem
-                    OperatingSystemVersion = $computer.OperatingSystemVersion
-                    Enabled                = $computer.Enabled
-                    LastLogonDate          = $computer.LastLogonDate
-                    Created                = $computer.Created
-                    Modified               = $computer.Modified
-                    DistinguishedName      = $computer.DistinguishedName
-
-                    # System Details
-                    LastBootUpTime         = $osInfo.ConvertToDateTime($osInfo.LastBootUpTime)
-                    PhysicalMemory         = [math]::Round($sysInfo.TotalPhysicalMemory / 1GB, 2)
-                    Manufacturer           = $sysInfo.Manufacturer
-                    Model                  = $sysInfo.Model
-                    BIOSVersion            = $biosInfo.Version
-                    SerialNumber           = $biosInfo.SerialNumber
-
-                    # Security Info
-                    AutoStartServices      = $services
-                    NetworkConfiguration   = $networkConfig
-                    DiskInformation        = $diskInfo
-                    StartupCommands        = $startupCommands
-                    ShareInformation       = $shares
-
-                    AccessStatus           = "Success"
-                }
-            }
-            catch {
-                Write-Log "Error processing computer $($computer.Name): $($_.Exception.Message)" -Level Warning
-                
-                [PSCustomObject]@{
-                    Name                   = $computer.Name
-                    DNSHostName            = $computer.DNSHostName
-                    OperatingSystem        = $computer.OperatingSystem
-                    OperatingSystemVersion = $computer.OperatingSystemVersion
-                    Enabled                = $computer.Enabled
-                    LastLogonDate          = $computer.LastLogonDate
-                    Created                = $computer.Created
-                    Modified               = $computer.Modified
-                    DistinguishedName      = $computer.DistinguishedName
-                    SID                    = $computer.SID
-                    AccessStatus           = "Access Error: $($_.Exception.Message)"
-                }
-            }
-        }
-        
-        # Generate and display statistics
-        $stats = Get-CollectionStatistics -Data $computers -ObjectType $ObjectType -IncludeAccessStatus
-        $stats.DisplayStatistics()
-        
-        # Export data 
-        Export-ADData -ObjectType $ObjectType -Data $computers -ExportPath $ExportPath
-        
-        return $computers
-    }
-    catch {
-        Write-Log "Error retrieving computers: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve computer accounts. Check permissions."
-    }
-}
-
-#endregion
-
-
-#region Get-ADGroupsAndMembers.ps1
-
-function Get-ADGroupsAndMembers {
-    [CmdletBinding()]
-    param(
-        [string]$ObjectType = "Groups",
-        [string]$ExportPath = $script:Config.ExportPath
-    )
-    
-    try {
-        Write-Log "Retrieving groups and members..." -Level Info
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing group retrieval..."
-        
-        $properties = @(
-            'Name',
-            'Description',
-            'GroupCategory',
-            'GroupScope',
-            'Members',
-            'MemberOf',
-            'DistinguishedName',
-            'Created',
-            'Modified'
-        )
-
-        $groups = Invoke-WithRetry -ScriptBlock {
-            Get-ADGroup -Filter * -Properties $properties -ErrorAction Stop
-        }
-        
-        $groupObjects = Get-ADObjects -ObjectType $ObjectType -Objects $groups -ProcessingScript {
-            param($group)
-            
-            try {
-                [PSCustomObject]@{
-                    Name                   = $group.Name
-                    Description            = $group.Description
-                    GroupCategory          = $group.GroupCategory  # Security or Distribution
-                    GroupScope             = $group.GroupScope       # Universal, Global, DomainLocal
-                    TotalNestedMemberCount = $group.Members.Count
-                    Members                = $group.Members
-                    Created                = $group.Created
-                    Modified               = $group.Modified
-                    DistinguishedName      = $group.DistinguishedName
-                    AccessStatus           = "Success"
-                }
-            }
-            catch {
-                Write-Log "Error processing group $($group.Name): $($_.Exception.Message)" -Level Warning
-                
-                [PSCustomObject]@{
-                    Name                   = $group.Name
-                    Description            = $group.Description
-                    GroupCategory          = $group.GroupCategory
-                    GroupScope             = $group.GroupScope
-                    TotalNestedMemberCount = 0
-                    Members                = @()
-                    Created                = $group.Created
-                    Modified               = $group.Modified
-                    DistinguishedName      = $group.DistinguishedName
-                    AccessStatus           = "Access Error: $($_.Exception.Message)"
-                }
-            }
-        }
-        
-        return $groupObjects
-    }
-    catch {
-        Write-Log "Error retrieving groups: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve groups. Check permissions."
-    }
-}
-
-#endregion
-
-
-#region Get-ADUsers.ps1
-
-function Get-ADUsers {
-    [CmdletBinding()]
-    param(
-        [string]$ObjectType = "Users",
-        [string]$ExportPath = $script:Config.ExportPath,
-        [switch]$IncludeDisabled
-    )
-    
-    try {
-        Write-Log "Retrieving user accounts..." -Level Info
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing user retrieval..."
-        
-        $filter = if ($IncludeDisabled) { "*" } else { "Enabled -eq 'True'" }
-        
-        $properties = @(
-            'SamAccountName',
-            'DisplayName',
-            'EmailAddress',
-            'Enabled',
-            'LastLogonDate',
-            'PasswordLastSet',
-            'PasswordNeverExpires',
-            'PasswordExpired',
-            'DistinguishedName',
-            'MemberOf',
-            'AdminCount', # Added for privileged account detection
-            'UserAccountControl'  # Added for account status
-        )
-        
-        $allUsers = Invoke-WithRetry -ScriptBlock {
-            Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
-        }
-        
-        $users = Get-ADObjects -ObjectType $ObjectType -Objects $allUsers -ProcessingScript {
-            param($user)
-            
-            try {
-                # Check for delegated permissions
-                $delegatedPermissions = Get-ObjectDelegatedPermissions -Identity $user.DistinguishedName
-
-                # Determine account type
-                $accountType = if ($user.ServicePrincipalNames) {
-                    'ServiceAccount'
-                }
-                elseif ($user.ObjectClass -eq 'msDS-ManagedServiceAccount') {
-                    'ManagedServiceAccount'
-                }
-                elseif ($user.ObjectClass -eq 'msDS-GroupManagedServiceAccount') {
-                    'GroupManagedServiceAccount'
-                }
-                else {
-                    'UserAccount'
-                }
-
-                [PSCustomObject]@{
-                    SamAccountName       = $user.SamAccountName
-                    DisplayName          = $user.DisplayName
-                    EmailAddress         = $user.EmailAddress
-                    Enabled              = $user.Enabled
-                    LastLogonDate        = $user.LastLogonDate
-                    PasswordLastSet      = $user.PasswordLastSet
-                    PasswordNeverExpires = $user.PasswordNeverExpires
-                    PasswordExpired      = $user.PasswordExpired
-                    DistinguishedName    = $user.DistinguishedName
-                    AccountType          = $accountType
-                    SID                  = $user.SID
-                    DelegatedPermissions = $delegatedPermissions
-                    AccountStatus        = if ($user.Enabled) { 
-                        if ($user.PasswordExpired) { "Expired" } else { "Active" }
-                    }
-                    else { "Disabled" }
-                    AccessStatus         = "Success"
-                }
-            }
-            catch {
-                Write-Log "Error processing user $($user.SamAccountName): $($_.Exception.Message)" -Level Warning
-                
-                [PSCustomObject]@{
-                    SamAccountName       = $user.SamAccountName
-                    DisplayName          = $null
-                    EmailAddress         = $null
-                    Enabled              = $null
-                    LastLogonDate        = $null
-                    PasswordLastSet      = $null
-                    PasswordNeverExpires = $null
-                    PasswordExpired      = $null
-                    DistinguishedName    = $user.DistinguishedName
-                    AccountType          = $null
-                    SID                  = $null
-                    DelegatedPermissions = @()
-                    AccountStatus        = $null
-                    AccessStatus         = "Access Error: $($_.Exception.Message)"
-                }
-            }
-        }
-        
-        return $users
-    }
-    catch {
-        Write-Log "Error retrieving users: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve users. Check permissions."
-    }
-}
-
-# Helper function to get delegated permissions
-function Get-ObjectDelegatedPermissions {
-    param(
-        [Parameter(Mandatory)]
-        [string]$Identity
-    )
-    
-    try {
-        # Ensure the Identity is a valid Distinguished Name
-        if (-not [ADSI]::Exists("LDAP://$Identity")) {
-            throw "Invalid Distinguished Name or object not found"
-        }
-
-        $path = [ADSI]"LDAP://$Identity"
-        $acl = $path.psbase.ObjectSecurity
-
-        return $acl.Access | Where-Object { 
-            $_.AccessControlType -eq 'Allow' -and 
-            $_.IdentityReference -notmatch 'NT AUTHORITY|BUILTIN' 
-        } | ForEach-Object {
-            [PSCustomObject]@{
-                Principal = $_.IdentityReference.Value
-                Rights    = $_.ActiveDirectoryRights
-                Type      = $_.AccessControlType
-            }
-        }
-    }
-    catch {
-        Write-Log "Error getting delegated permissions for $Identity : $($_.Exception.Message)" -Level Warning
-        return $null
-    }
-}
-
-#endregion
-
-
-#region Get-DomainInventory.ps1
-
-function Get-DomainInventory {
-    [CmdletBinding()]
-    param(
-        [ValidateScript({ Test-Path $_ })]
-        [string]$ExportPath = $script:Config.ExportPath,
-        [switch]$SkipUsers,
-        [switch]$SkipComputers,
-        [switch]$SkipGroups
-    )
-    
-    if (-not (Initialize-Environment)) {
-        Write-Log "Environment initialization failed" -Level Error
-        return
-    }
-    
-    if (-not (Import-ADModule)) {
-        Write-Log "AD Module import failed" -Level Error
-        return
-    }
-    
-    $startTime = Get-Date
-    Write-Log "Starting AD Inventory at $startTime" -Level Info
-    
-    try {
-        $totalSteps = 3
-        $currentStep = 0
-        
-        $currentStep++
-        
-        # Run selected components
-        if (-not $SkipUsers) {
-            Show-ProgressHelper -Activity "AD Inventory" `
-                -Status "Processing Users" `
-                -PercentComplete (($currentStep / $totalSteps) * 100)
-            
-            Get-ADUsers -ExportPath $ExportPath | Out-Null
-            $currentStep++
-        }
-        
-        if (-not $SkipComputers) {
-            Show-ProgressHelper -Activity "AD Inventory" `
-                -Status "Processing Computers" `
-                -PercentComplete (($currentStep / $totalSteps) * 100)
-            
-            Get-ADComputers -ExportPath $ExportPath | Out-Null
-            $currentStep++
-        }
-        
-        if (-not $SkipGroups) {
-            Show-ProgressHelper -Activity "AD Inventory" `
-                -Status "Processing Groups" `
-                -PercentComplete (($currentStep / $totalSteps) * 100)
-            
-            Get-ADGroupsAndMembers -ExportPath $ExportPath | Out-Null
-            $currentStep++
-        }
-        
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Complete" -Completed
-        
-        $endTime = Get-Date
-        $duration = $endTime - $startTime
-        Write-Log "AD Inventory completed. Duration: $($duration.TotalMinutes) minutes" -Level Info
-        
-    }
-    catch {
-        Write-Log "Error during inventory: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Error during inventory process"
-    }
-}
-
-#endregion
-
-
-#region Get-ForestInventory.ps1
-
-function Get-ForestInventory {
-    [CmdletBinding()]
-    param(
-        [string]$ObjectType = "ForestInfo",
-        [string]$ExportPath = $script:Config.ExportPath
-    )
-    
-    try {
-        Write-Log "Retrieving comprehensive forest information..." -Level Info
-
-        $forest = Invoke-WithRetry -ScriptBlock {
-            Get-ADForest -ErrorAction Stop
-        }
-
-        $forestInfo = [PSCustomObject]@{
-            ForestRootDomain   = $forest.RootDomain
-            ForestMode         = $forest.ForestMode
-            GlobalCatalogs     = $forest.GlobalCatalogs
-            Domains            = $forest.Domains
-            SchemaMaster       = $forest.SchemaMaster
-            DomainNamingMaster = $forest.DomainNamingMaster
-        }
-
-        # Get detailed information using the separate functions
-        $trustInfo = Get-ADTrustInfo -RootDomain $forest.RootDomain
-        $domainInfo = Get-ADDomainInfo -DomainNames $forest.Domains
-        $siteInfo = Get-ADSiteInfo
-        $policyInfo = Get-ADPolicyInfo
-        $networkTopology = Get-ADNetworkTopology
-        $securityConfig = Get-ADSecurityConfiguration
-
-        # Add the detailed information to the forest object
-        $forestInfo | Add-Member -MemberType NoteProperty -Name Trusts -Value $trustInfo
-        $forestInfo | Add-Member -MemberType NoteProperty -Name DomainInfo -Value $domainInfo
-        $forestInfo | Add-Member -MemberType NoteProperty -Name Sites -Value $siteInfo
-        $forestInfo | Add-Member -MemberType NoteProperty -Name Policies -Value $policyInfo
-        $forestInfo | Add-Member -MemberType NoteProperty -Name NetworkTopology -Value $networkTopology
-        $forestInfo | Add-Member -MemberType NoteProperty -Name SecurityConfiguration -Value $securityConfig
-
-        Export-ADData -ObjectType $ObjectType -Data $forestInfo -ExportPath $ExportPath
-
-        return $forestInfo
-    }
-    catch {
-        Write-Log "Failed to retrieve forest information: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Insufficient permissions or unable to retrieve forest info."
-        return $null
-    }
-}
-
-#endregion
-
-
-#region Get-NetworkInventory.ps1
-
-
-#endregion
-
-
-#region Get-ADDomainInfo.ps1
-
-function Get-ADDomainInfo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string[]]$DomainNames
-    )
-    
-    try {
-        Write-Log "Retrieving AD domain information..." -Level Info
-        
-        $results = foreach ($domainName in $DomainNames) {
-            try {
-                Write-Log "Attempting to access domain: $domainName" -Level Info
-                
-                $domain = Invoke-WithRetry -ScriptBlock {
-                    Get-ADDomain -Identity $domainName -ErrorAction Stop
-                }
-
-                # Try to get domain controllers
-                $domainControllers = try {
-                    Get-ADDomainController -Filter "Domain -eq '$domainName'" -ErrorAction Stop | 
-                    ForEach-Object {
-                        [PSCustomObject]@{
-                            HostName               = $_.HostName
-                            IPv4Address            = $_.IPv4Address
-                            Site                   = $_.Site
-                            IsGlobalCatalog        = $_.IsGlobalCatalog
-                            OperatingSystem        = $_.OperatingSystem
-                            OperatingSystemVersion = $_.OperatingSystemVersion
-                            Enabled                = $_.Enabled
-                        }
-                    }
-                }
-                catch {
-                    Write-Log "Unable to retrieve domain controllers for $domainName : $($_.Exception.Message)" -Level Warning
-                    "Access Denied or Connection Failed"
-                }
-
-                # Get OU information
-                $ouInfo = Get-ADOUInfo -DomainName $domainName
-
-                # Add this line after getting domain controllers
-                $replicationInfo = Get-ADReplicationInfo -DomainName $domainName
-
-
-                [PSCustomObject]@{
-                    DomainName           = $domainName
-                    DomainMode           = $domain.DomainMode
-                    PDCEmulator          = $domain.PDCEmulator
-                    RIDMaster            = $domain.RIDMaster
-                    InfrastructureMaster = $domain.InfrastructureMaster
-                    DomainControllers    = $domainControllers
-                    OrganizationalUnits  = $ouInfo
-                    ReplicationTopology  = $replicationInfo
-                    AccessStatus         = "Success"
-                }
-            }
-            catch {
-                Write-Log "Failed to access domain $domainName : $($_.Exception.Message)" -Level Warning
-                
-                [PSCustomObject]@{
-                    DomainName           = $domainName
-                    DomainMode           = $null
-                    PDCEmulator          = $null
-                    RIDMaster            = $null
-                    InfrastructureMaster = $null
-                    DomainControllers    = @()
-                    OrganizationalUnits  = $null
-                    ReplicationTopology  = $null
-                    AccessStatus         = "Access Failed: $($_.Exception.Message)"
-                }
-            }
-        }
-
-        return $results
-    }
-    catch {
-        Write-Log "Error in Get-ADDomainInfo: $($_.Exception.Message)" -Level Error
-        return $null
-    }
-}
-
-#endregion
-
-
 #region Get-ADOUInfo.ps1
 
 function Get-ADOUInfo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$DomainName
-    )
     
     try {
-        Write-Log "Retrieving OU information for domain: $DomainName..." -Level Info
+        Write-Log "Retrieving OU information for domain:..." -Level Info
         
-        $ous = Get-ADOrganizationalUnit -Filter * -Server $DomainName -Properties * -ErrorAction Stop
+        $ous = Get-ADOrganizationalUnit -Filter * -Properties * -ErrorAction Stop
         
         $ouInfo = foreach ($ou in $ous) {
-            # Get ACL information
-            $acl = Get-Acl -Path "AD:$($ou.DistinguishedName)" -ErrorAction SilentlyContinue
-            
-            # Process permissions
-            $permissions = $acl.Access | ForEach-Object {
-                [PSCustomObject]@{
-                    IdentityReference     = $_.IdentityReference.ToString()
-                    AccessControlType     = $_.AccessControlType.ToString()
-                    ActiveDirectoryRights = $_.ActiveDirectoryRights.ToString()
-                    InheritanceType       = $_.InheritanceType.ToString()
-                }
-            }
-            
             [PSCustomObject]@{
-                Name                 = $ou.Name
-                DistinguishedName    = $ou.DistinguishedName
-                Description          = $ou.Description
-                Created              = $ou.Created
-                Modified             = $ou.Modified
-                ChildOUs             = ($ou.DistinguishedName -split ',OU=' | Select-Object -Skip 1) -join ',OU='
-                DelegatedPermissions = $permissions
+                Name              = $ou.Name
+                DistinguishedName = $ou.DistinguishedName
+                Description       = $ou.Description
+                Created           = $ou.Created
+                Modified          = $ou.Modified
+                ChildOUs          = ($ou.DistinguishedName -split ',OU=' | Select-Object -Skip 1) -join ',OU='
             }
         }
         
         return $ouInfo
     }
     catch {
-        Write-Log "Error retrieving OU information for $DomainName : $($_.Exception.Message)" -Level Error
-        return $null
-    }
-}
-
-#endregion
-
-
-#region Get-ADReplicationInfo.ps1
-
-function Get-ADReplicationInfo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$DomainName
-    )
-    
-    try {
-        Write-Log "Retrieving replication topology for domain: $DomainName..." -Level Info
-        
-        # Get replication connections
-        $replicationConnections = Get-ADReplicationConnection -Filter * -Server $DomainName | 
-        ForEach-Object {
-            [PSCustomObject]@{
-                FromServer    = $_.ReplicateFromDirectoryServer
-                ToServer      = $_.ReplicateToDirectoryServer
-                Schedule      = $_.ReplicationSchedule
-                Options       = $_.Options
-                AutoGenerated = $_.AutoGenerated
-            }
-        }
-        
-        # Get replication site links
-        $siteLinks = Get-ADReplicationSiteLink -Filter * -Server $DomainName |
-        ForEach-Object {
-            [PSCustomObject]@{
-                Name                 = $_.Name
-                Cost                 = $_.Cost
-                ReplicationFrequency = $_.ReplicationFrequencyInMinutes
-                Sites                = $_.Sites
-            }
-        }
-        
-        # Get replication status
-        $replicationStatus = Get-ADReplicationPartnerMetadata -Target $DomainName -Scope Domain |
-        ForEach-Object {
-            [PSCustomObject]@{
-                Partner                = $_.Partner
-                LastReplicationAttempt = $_.LastReplicationAttempt
-                LastReplicationResult  = $_.LastReplicationResult
-                LastReplicationSuccess = $_.LastReplicationSuccess
-            }
-        }
-        
-        return [PSCustomObject]@{
-            Connections = $replicationConnections
-            SiteLinks   = $siteLinks
-            Status      = $replicationStatus
-        }
-    }
-    catch {
-        Write-Log "Error retrieving replication topology for $DomainName : $($_.Exception.Message)" -Level Error
+        Write-Log "Error retrieving OU information for: $($_.Exception.Message)" -Level Error
         return $null
     }
 }
@@ -1320,31 +1113,21 @@ function Get-ADReplicationInfo {
 #region Get-ADTrustInfo.ps1
 
 function Get-ADTrustInfo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string]$RootDomain
-    )
-    
     try {
         Write-Log "Retrieving AD trust information..." -Level Info
         
-        Get-ADTrust -Filter * -Server $RootDomain -ErrorAction SilentlyContinue | 
+        Get-ADTrust -Filter * -ErrorAction SilentlyContinue | 
         ForEach-Object {
             [PSCustomObject]@{
-                Name      = $_.Name
-                Source    = $_.Source
-                Target    = $_.Target
-                TrustType = $_.TrustType
-                Direction = $_.Direction
-                TGTQuota  = $_.TGTQuota
-                Status    = try {
-                    Test-ADTrust -Identity $_.Name -ErrorAction Stop
-                    "Valid"
-                }
-                catch {
-                    "Invalid: $($_.Exception.Message)"
-                }
+                Name               = $_.Name
+                Source             = $_.Source
+                Target             = $_.Target
+                TrustType          = $_.TrustType
+                Direction          = $_.Direction
+                DisallowTransivity = $_.DisallowTransivity
+                InstraForest       = $_.InstraForest
+                TGTQuota           = $_.TGTQuota
+                DistinguishedName  = $_.DistinguishedName
             }
         }
     }
@@ -1429,10 +1212,7 @@ function Export-ADData {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ObjectType,
-        
-        [Parameter(Mandatory = $true)]
-        [object]$Data, # Changed from IEnumerable to object
+        [object]$Data, 
         
         [Parameter(Mandatory = $true)]
         [string]$ExportPath
@@ -1448,7 +1228,7 @@ function Export-ADData {
     }
     
     $timestamp = (Get-Date -Format 'yyyyMMdd_HHmmss')
-    $exportFile = Join-Path $ExportPath ("{0}_{1}.json" -f $ObjectType, $timestamp)
+    $exportFile = Join-Path $ExportPath ("DomainInventory_{1}.json" -f $timestamp)
     
     # If $Data is not an array, just wrap it in one before converting to JSON
     if ($Data -isnot [System.Collections.IEnumerable] -or $Data -is [string]) {
@@ -1458,7 +1238,7 @@ function Export-ADData {
     $Data | ConvertTo-Json -Depth 10 | Out-File $exportFile
     
     $fullPath = (Resolve-Path $exportFile).Path
-    Write-Log "$ObjectType exported to $fullPath" -Level Info
+    Write-Log "Domain Inventory exported to $fullPath" -Level Info
 }
 
 #endregion
@@ -1561,10 +1341,10 @@ function Get-CollectionStatistics {
             Write-Host "Errors: $($this.ErrorCount)"
         }
         
-        Write-Host "`nDistribution by OU:"
-        $this.OUDistribution.GetEnumerator() | Sort-Object Name | ForEach-Object {
-            Write-Host ("  - {0,-50} : {1,5}" -f $_.Key, $_.Value)
-        }
+        # Write-Host "`nDistribution by OU:"
+        # $this.OUDistribution.GetEnumerator() | Sort-Object Name | ForEach-Object {
+        #     Write-Host ("  - {0,-50} : {1,5}" -f $_.Key, $_.Value)
+        # }
     }
     
     return $stats

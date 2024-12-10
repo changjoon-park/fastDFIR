@@ -2,7 +2,7 @@ function Get-ADForestInfo {
     try {
         Write-Log "Retrieving AD forest information..." -Level Info
         
-        $forestInfo = Get-ADForest -Filter * -ErrorAction SilentlyContinue | 
+        $forestInfo = Get-ADForest -ErrorAction SilentlyContinue | 
         ForEach-Object {
             [PSCustomObject]@{
                 Name                = $_.Name

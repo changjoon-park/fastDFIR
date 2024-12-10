@@ -5,6 +5,7 @@ function Get-ADDNSInfo {
     try {
         $dnsServer = Get-ADDomainController -Discover | Select-Object -ExpandProperty HostName
         
+        # TODO: Permission Denied
         # Get all DNS zones
         $zones = Get-DnsServerZone -ComputerName $dnsServer | ForEach-Object {
             $zone = $_

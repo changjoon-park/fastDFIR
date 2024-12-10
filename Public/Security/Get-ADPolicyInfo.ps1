@@ -1,10 +1,4 @@
 function Get-ADPolicyInfo {
-    [CmdletBinding()]
-    param(
-        [string]$ObjectType = "Policies",
-        [string]$ExportPath = $script:Config.ExportPath
-    )
-    
     try {
         Write-Log "Retrieving AD policy information..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing policy retrieval..."
@@ -74,9 +68,6 @@ function Get-ADPolicyInfo {
             DefaultLockoutPolicy        = $lockoutPolicies
             FineGrainedPasswordPolicies = $fgppPolicies
         }
-
-        # Export data
-        Export-ADData -ObjectType $ObjectType -Data $policyInfo -ExportPath $ExportPath
 
         return $policyInfo
     }

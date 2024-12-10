@@ -26,13 +26,6 @@ function Get-ADDomainInfo {
             "Access Denied or Connection Failed"
         }
 
-        # Get OU information
-        $ouInfo = Get-ADOUInfo 
-
-        # Add this line after getting domain controllers
-        $replicationInfo = Get-ADReplicationInfo 
-
-
         $domainInfo = [PSCustomObject]@{
             DomainName           = $domain.Name
             DomainMode           = $domain.DomainMode
@@ -40,14 +33,39 @@ function Get-ADDomainInfo {
             RIDMaster            = $domain.RIDMaster
             InfrastructureMaster = $domain.InfrastructureMaster
             DomainControllers    = $domainControllers
-            OrganizationalUnits  = $ouInfo
-            ReplicationTopology  = $replicationInfo
+            OrganizationalUnits  = Get-ADOUInfo
         }
 
         return $domainInfo
     }
     catch {
         Write-Log "Error in Get-ADDomainInfo: $($_.Exception.Message)" -Level Error
+        return $null
+    }
+}
+
+function Get-ADOUInfo {
+    
+    try {
+        Write-Log "Retrieving OU information for domain:..." -Level Info
+        
+        $ous = Get-ADOrganizationalUnit -Filter * -Properties * -ErrorAction Stop
+        
+        $ouInfo = foreach ($ou in $ous) {
+            [PSCustomObject]@{
+                Name              = $ou.Name
+                DistinguishedName = $ou.DistinguishedName
+                Description       = $ou.Description
+                Created           = $ou.Created
+                Modified          = $ou.Modified
+                ChildOUs          = ($ou.DistinguishedName -split ',OU=' | Select-Object -Skip 1) -join ',OU='
+            }
+        }
+        
+        return $ouInfo
+    }
+    catch {
+        Write-Log "Error retrieving OU information for: $($_.Exception.Message)" -Level Error
         return $null
     }
 }
