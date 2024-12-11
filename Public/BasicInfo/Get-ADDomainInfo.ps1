@@ -39,7 +39,7 @@ function Get-ADDomainInfo {
         # Add ToString method to domainInfo
         Add-Member -InputObject $domainInfo -MemberType ScriptMethod -Name "ToString" -Value {
             "DomainName=$($this.DomainName); DomainMode=$($this.DomainMode); PDCEmulator=$($this.PDCEmulator); InfrastructureMaster=$($this.InfrastructureMaster); DCs=$($this.DomainControllers.Count); OUs=$($this.OrganizationalUnits.Count)"
-        }
+        } -Force
 
         return $domainInfo
     }
@@ -68,7 +68,7 @@ function Get-ADOUInfo {
             # Add ToString method to each OU object
             Add-Member -InputObject $ouObject -MemberType ScriptMethod -Name "ToString" -Value {
                 "Name=$($this.Name); DN=$($this.DistinguishedName); Children=$($this.ChildOUs.Split(',').Count)"
-            }
+            } -Force
 
             $ouObject
         }

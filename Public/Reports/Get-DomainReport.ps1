@@ -198,6 +198,38 @@ function Add-DomainReportMethods {
     Add-Member -InputObject $DomainReport.DomainObjects -MemberType ScriptMethod -Name "ToString" -Value $domainObjectsToString -Force
     Add-Member -InputObject $DomainReport.SecuritySettings -MemberType ScriptMethod -Name "ToString" -Value $securitySettingsToString -Force
 
+    # Add a scriptblock for checking host connectivity
+    $testHostConnectivity = {
+        param(
+            [Parameter(Mandatory = $true)]
+            $ADComputer
+        )
+
+        # Determine the target hostname or name
+        $target = if ($ADComputer.DNSHostName) { $ADComputer.DNSHostName } else { $ADComputer.Name }
+
+        if ([string]::IsNullOrEmpty($target)) {
+            Write-Host "Invalid target. The specified ADComputer has no resolvable DNSHostName or Name."
+            return $null
+        }
+
+        # Use Test-Connection to see if host is reachable
+        # -Count 1 for a quick single ping, -Quiet returns True/False
+        $reachable = Test-Connection -ComputerName $target -Count 1 -Quiet -ErrorAction SilentlyContinue
+
+        # Update the ADComputer object based on reachability
+        $ADComputer.IsAlive = $reachable
+        $ADComputer.NetworkStatus = if ($reachable) { "Online" } else { "Offline/Unreachable" }
+
+        $result = [PSCustomObject]@{
+            Computer      = $target
+            IsAlive       = $ADComputer.IsAlive
+            NetworkStatus = $ADComputer.NetworkStatus
+        }
+
+        return $result
+    }
+
     # Define a scriptblock for scanning common ports on all computers
     $scanPorts = {
         param(
@@ -273,6 +305,7 @@ function Add-DomainReportMethods {
 
         return $this.NetworkPortScanResults
     }
+
 
     # Define a scriptblock for scanning ports on a single target
     $scanTargetPorts = {
@@ -373,6 +406,7 @@ function Add-DomainReportMethods {
         }
     }
 
+    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "TestHostConnectivity" -Value $testHostConnectivity -Force
     Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "ScanCommonPorts" -Value $scanPorts -Force
     Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "ScanTargetPorts" -Value $scanTargetPorts -Force
     Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "FindSuspiciousSPNs" -Value $findSuspiciousSPNs

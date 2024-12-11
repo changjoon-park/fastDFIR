@@ -46,7 +46,7 @@ function Get-ADSiteInfo {
         # Add ToString method to siteTopology
         Add-Member -InputObject $siteTopology -MemberType ScriptMethod -Name "ToString" -Value {
             "Sites=$($this.Sites.Count); TotalSites=$($this.TotalSites); TotalSubnets=$($this.TotalSubnets); TotalSiteLinks=$($this.TotalSiteLinks); TotalReplConnections=$($this.TotalReplConnections)"
-        }
+        } -Force
 
         return $siteTopology
     }

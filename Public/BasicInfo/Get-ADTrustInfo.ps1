@@ -16,10 +16,9 @@ function Get-ADTrustInfo {
                 DistinguishedName  = $_.DistinguishedName
             }
             
-            # Add ToString method
             Add-Member -InputObject $info -MemberType ScriptMethod -Name "ToString" -Value {
                 "Name=$($this.Name); Source=$($this.Source); Target=$($this.Target); TrustType=$($this.TrustType); Direction=$($this.Direction)"
-            }
+            } -Force
             
             $info
         }

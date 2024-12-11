@@ -17,10 +17,9 @@ function Get-ADForestInfo {
                 DistinguishedName   = $_.DistinguishedName
             }
             
-            # Add ToString method
             Add-Member -InputObject $info -MemberType ScriptMethod -Name "ToString" -Value {
                 "Name=$($this.Name); ForestMode=$($this.ForestMode); SchemaMaster=$($this.SchemaMaster); GlobalCatalogs=$($this.GlobalCatalogs.Count); Domains=$($this.Domains.Count)"
-            }
+            } -Force
             
             $info
         }

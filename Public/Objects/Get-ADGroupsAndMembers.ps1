@@ -44,7 +44,7 @@ function Get-ADGroupsAndMembers {
 
                 Add-Member -InputObject $groupObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "Name=$($this.Name); Category=$($this.GroupCategory); Scope=$($this.GroupScope); Members=$($this.TotalNestedMemberCount)"
-                }
+                } -Force
 
                 $groupObject
             }
@@ -66,7 +66,7 @@ function Get-ADGroupsAndMembers {
 
                 Add-Member -InputObject $groupObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "Name=$($this.Name); Status=Error"
-                }
+                } -Force
 
                 $groupObject
             }

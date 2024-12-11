@@ -52,7 +52,7 @@ function Get-ADComputers {
 
                 Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "Name=$($this.Name); NetworkStatus=$($this.NetworkStatus); IsAlive=$($this.IsAlive)"
-                }
+                } -Force
 
                 $computerObject
             }
@@ -78,7 +78,7 @@ function Get-ADComputers {
 
                 Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "Name=$($this.Name); NetworkStatus=Error; IsAlive=$($this.IsAlive)"
-                }
+                } -Force 
 
                 $computerObject
             }

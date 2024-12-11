@@ -53,7 +53,7 @@ function Get-ADUsers {
 
                 Add-Member -InputObject $userObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "SamAccountName=$($this.SamAccountName); Status=$($this.AccountStatus); Groups=$($this.MemberOf.Count)"
-                }
+                } -Force
 
                 $userObject
             }
@@ -76,7 +76,7 @@ function Get-ADUsers {
 
                 Add-Member -InputObject $userObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "SamAccountName=$($this.SamAccountName); Status=Error; Groups=0"
-                }
+                } -Force
 
                 $userObject
             }

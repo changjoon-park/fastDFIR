@@ -49,7 +49,7 @@ function Get-CriticalObjectACLs {
                 # Add ToString method to each ACL object
                 Add-Member -InputObject $aclObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "OU=$($this.OU); Owner=$($this.Owner); Rules=$($this.AccessRules.Count)"
-                }
+                } -Force
 
                 $aclObject
             }
@@ -95,7 +95,7 @@ function Get-CriticalShareACLs {
                 # Add ToString method to each share ACL object
                 Add-Member -InputObject $shareAclObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "Share=$($this.ShareName); Owner=$($this.Owner); Rules=$($this.AccessRules.Count)"
-                }
+                } -Force
 
                 $shareAclObject
             }
@@ -131,7 +131,7 @@ function Get-SPNConfiguration {
             # Add ToString method to each SPN config object
             Add-Member -InputObject $spnObject -MemberType ScriptMethod -Name "ToString" -Value {
                 "User=$($this.UserName); Enabled=$($this.Enabled); SPNCount=$($this.SPNs.Count); Duplicate=$($this.IsDuplicate)"
-            }
+            } -Force
 
             $spnObject
         }
