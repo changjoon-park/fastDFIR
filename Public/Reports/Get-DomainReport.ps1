@@ -193,12 +193,149 @@ function Add-DomainReportMethods {
         
         return "SPNs=$spns, ACLs=$acls"
     }
-
     # Add the ToString methods to each object
     Add-Member -InputObject $DomainReport.BasicInfo -MemberType ScriptMethod -Name "ToString" -Value $basicInfoToString -Force
     Add-Member -InputObject $DomainReport.DomainObjects -MemberType ScriptMethod -Name "ToString" -Value $domainObjectsToString -Force
     Add-Member -InputObject $DomainReport.SecuritySettings -MemberType ScriptMethod -Name "ToString" -Value $securitySettingsToString -Force
 
+    # Define a scriptblock for scanning common ports on all computers
+    $scanPorts = {
+        param(
+            [int[]]$Ports = (80, 443, 445, 3389, 5985),
+            [int]$Timeout = 1000
+        )
+
+        # Verify we have DomainObjects.Computers
+        if (-not $this.DomainObjects.Computers) {
+            Write-Host "No computers found in the domain report. Cannot scan ports."
+            return $null
+        }
+
+        $results = @()
+
+        foreach ($comp in $this.DomainObjects.Computers) {
+            # Check if the host is alive before scanning
+            if (-not $comp.IsAlive) {
+                Write-Host "Skipping $($comp.Name) because IsAlive=$($comp.IsAlive)"
+                continue
+            }
+
+            # Determine the target hostname or name
+            $target = if ($comp.DNSHostName) { $comp.DNSHostName } else { $comp.Name }
+
+            if ([string]::IsNullOrEmpty($target)) {
+                Write-Host "Invalid target for $($comp.Name): No resolvable DNSHostName or Name."
+                continue
+            }
+
+            foreach ($port in $Ports) {
+                $tcp = New-Object System.Net.Sockets.TcpClient
+                try {
+                    $asyncResult = $tcp.BeginConnect($target, $port, $null, $null)
+                    $wait = $asyncResult.AsyncWaitHandle.WaitOne($Timeout)
+                    
+                    if ($wait -and $tcp.Connected) {
+                        $tcp.EndConnect($asyncResult)
+                        $results += [PSCustomObject]@{
+                            Computer = $target
+                            Port     = $port
+                            Status   = "Open"
+                        }
+                    }
+                    else {
+                        $results += [PSCustomObject]@{
+                            Computer = $target
+                            Port     = $port
+                            Status   = "Closed/Filtered"
+                        }
+                    }
+                }
+                catch {
+                    $results += [PSCustomObject]@{
+                        Computer = $target
+                        Port     = $port
+                        Status   = "Error: $($_.Exception.Message)"
+                    }
+                }
+                finally {
+                    $tcp.Close()
+                }
+            }
+        }
+
+        # Store results in the domain report
+        if (-not $this.PSObject.Properties.Name.Contains('NetworkPortScanResults')) {
+            Add-Member -InputObject $this -MemberType NoteProperty -Name 'NetworkPortScanResults' -Value $results
+        }
+        else {
+            $this.NetworkPortScanResults = $results
+        }
+
+        return $this.NetworkPortScanResults
+    }
+
+    # Define a scriptblock for scanning ports on a single target
+    $scanTargetPorts = {
+        param(
+            [Parameter(Mandatory = $true)]
+            $ADComputer,
+            [Parameter(Mandatory = $true)]
+            [int[]]$Ports
+        )
+
+        # Check if the host is alive before scanning
+        if (-not $ADComputer.IsAlive) {
+            Write-Host "Skipping $($ADComputer.Name) because IsAlive=$($ADComputer.IsAlive)"
+            return $null
+        }
+
+        # Determine the target hostname or name
+        $target = if ($ADComputer.DNSHostName) { $ADComputer.DNSHostName } else { $ADComputer.Name }
+
+        if ([string]::IsNullOrEmpty($target)) {
+            Write-Host "Invalid target. The specified ADComputer has no resolvable DNSHostName or Name."
+            return $null
+        }
+
+        $results = @()
+
+        foreach ($port in $Ports) {
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            try {
+                # Attempt connection with a 1 second timeout
+                $asyncResult = $tcp.BeginConnect($target, $port, $null, $null)
+                $wait = $asyncResult.AsyncWaitHandle.WaitOne(1000)
+
+                if ($wait -and $tcp.Connected) {
+                    $tcp.EndConnect($asyncResult)
+                    $results += [PSCustomObject]@{
+                        Computer = $target
+                        Port     = $port
+                        Status   = "Open"
+                    }
+                }
+                else {
+                    $results += [PSCustomObject]@{
+                        Computer = $target
+                        Port     = $port
+                        Status   = "Closed/Filtered"
+                    }
+                }
+            }
+            catch {
+                $results += [PSCustomObject]@{
+                    Computer = $target
+                    Port     = $port
+                    Status   = "Error: $($_.Exception.Message)"
+                }
+            }
+            finally {
+                $tcp.Close()
+            }
+        }
+
+        return $results
+    }
 
     # Add method to find suspicious SPNs
     $findSuspiciousSPNs = {
@@ -236,6 +373,8 @@ function Add-DomainReportMethods {
         }
     }
 
+    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "ScanCommonPorts" -Value $scanPorts -Force
+    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "ScanTargetPorts" -Value $scanTargetPorts -Force
     Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "FindSuspiciousSPNs" -Value $findSuspiciousSPNs
     Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "DisplaySuspiciousSPNs" -Value $displaySuspiciousSPNs
 }

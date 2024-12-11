@@ -8,9 +8,10 @@ function Get-ADComputers {
     try {
         Write-Log "Retrieving computer accounts..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing computer retrieval..."
-        
+
         $properties = @(
             'Name',
+            'IPv4Address',
             'DistinguishedName',
             'OperatingSystem',
             'OperatingSystemVersion',
@@ -23,11 +24,11 @@ function Get-ADComputers {
             'SID',
             'ServicePrincipalNames'
         )
-        
+
         $computers = Invoke-WithRetry -ScriptBlock {
             Get-ADComputer -Filter * -Properties $properties -ErrorAction Stop
         }
-        
+
         $computerObjects = Get-ADObjects -ObjectType $ObjectType -Objects $computers -ProcessingScript {
             param($computer)
             
@@ -45,10 +46,12 @@ function Get-ADComputers {
                     DistinguishedName      = $computer.DistinguishedName
                     ServicePrincipalNames  = $computer.ServicePrincipalNames
                     AccessStatus           = "Success"
+                    NetworkStatus          = "Unknown" # initial status
+                    IsAlive                = $false     # initial state, not tested yet
                 }
 
                 Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
-                    "Name=$($this.Name); OS=$($this.OperatingSystem); Enabled=$($this.Enabled); SPNs=$($this.ServicePrincipalNames.Count)"
+                    "Name=$($this.Name); NetworkStatus=$($this.NetworkStatus); IsAlive=$($this.IsAlive)"
                 }
 
                 $computerObject
@@ -69,10 +72,12 @@ function Get-ADComputers {
                     DistinguishedName      = $computer.DistinguishedName
                     ServicePrincipalNames  = $null
                     AccessStatus           = "Access Error: $($_.Exception.Message)"
+                    NetworkStatus          = "Error"
+                    IsAlive                = $false
                 }
 
                 Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
-                    "Name=$($this.Name); Status=Error"
+                    "Name=$($this.Name); NetworkStatus=Error; IsAlive=$($this.IsAlive)"
                 }
 
                 $computerObject
