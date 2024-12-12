@@ -22,7 +22,8 @@ function Get-ADComputers {
             'Modified',
             'DNSHostName',
             'SID',
-            'ServicePrincipalNames'
+            'ServicePrincipalNames',
+            'MemberOf'  # Added MemberOf property
         )
 
         $computers = Invoke-WithRetry -ScriptBlock {
@@ -45,13 +46,15 @@ function Get-ADComputers {
                     Modified               = $computer.Modified
                     DistinguishedName      = $computer.DistinguishedName
                     ServicePrincipalNames  = $computer.ServicePrincipalNames
+                    MemberOf               = $computer.MemberOf  # Added MemberOf property
                     AccessStatus           = "Success"
-                    NetworkStatus          = "Unknown" # initial status
-                    IsAlive                = $false     # initial state, not tested yet
+                    NetworkStatus          = "Unknown"
+                    IsAlive                = $false
                 }
 
+                # Updated ToString method to include group membership count
                 Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
-                    "Name=$($this.Name); NetworkStatus=$($this.NetworkStatus); IsAlive=$($this.IsAlive)"
+                    "Name=$($this.Name); NetworkStatus=$($this.NetworkStatus); IsAlive=$($this.IsAlive); Groups=$($this.MemberOf.Count)"
                 } -Force
 
                 $computerObject
@@ -71,19 +74,20 @@ function Get-ADComputers {
                     Modified               = $null
                     DistinguishedName      = $computer.DistinguishedName
                     ServicePrincipalNames  = $null
+                    MemberOf               = @()  # Empty array for error cases
                     AccessStatus           = "Access Error: $($_.Exception.Message)"
                     NetworkStatus          = "Error"
                     IsAlive                = $false
                 }
 
                 Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
-                    "Name=$($this.Name); NetworkStatus=Error; IsAlive=$($this.IsAlive)"
+                    "Name=$($this.Name); NetworkStatus=Error; IsAlive=$($this.IsAlive); Groups=0"
                 } -Force 
 
                 $computerObject
             }
         }
-        
+
         return $computerObjects
     }
     catch {

@@ -1,9 +1,9 @@
-# Merged Script - Created 2024-12-11 06:52:52
+# Merged Script - Created 2024-12-12 22:12:32
 
 
 #region MergedScript.ps1
 
-# Merged Script - Created 2024-12-11 06:52:52
+# Merged Script - Created 2024-12-12 22:12:32
 
 
 #region MergedScript.ps1
@@ -421,7 +421,7 @@ function Get-ADSecurityConfiguration {
         # Add ToString method to securityConfig
         Add-Member -InputObject $securityConfig -MemberType ScriptMethod -Name "ToString" -Value {
             "ObjectACLs=$($this.ObjectACLs.Count); FileShareACLs=$($this.FileShareACLs.Count); SPNs=$($this.SPNConfiguration.Count)"
-        }
+        } -Force
         
         return $securityConfig
     }
@@ -459,7 +459,7 @@ function Get-CriticalObjectACLs {
                 # Add ToString method to each ACL object
                 Add-Member -InputObject $aclObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "OU=$($this.OU); Owner=$($this.Owner); Rules=$($this.AccessRules.Count)"
-                }
+                } -Force
 
                 $aclObject
             }
@@ -505,7 +505,7 @@ function Get-CriticalShareACLs {
                 # Add ToString method to each share ACL object
                 Add-Member -InputObject $shareAclObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "Share=$($this.ShareName); Owner=$($this.Owner); Rules=$($this.AccessRules.Count)"
-                }
+                } -Force
 
                 $shareAclObject
             }
@@ -541,7 +541,7 @@ function Get-SPNConfiguration {
             # Add ToString method to each SPN config object
             Add-Member -InputObject $spnObject -MemberType ScriptMethod -Name "ToString" -Value {
                 "User=$($this.UserName); Enabled=$($this.Enabled); SPNCount=$($this.SPNs.Count); Duplicate=$($this.IsDuplicate)"
-            }
+            } -Force
 
             $spnObject
         }
@@ -580,7 +580,7 @@ function Get-ADDomainInfo {
         $domainControllers = try {
             Get-ADDomainController -Filter * -ErrorAction Stop | 
             ForEach-Object {
-                [PSCustomObject]@{
+                $dc = [PSCustomObject]@{
                     HostName               = $_.HostName
                     IPv4Address            = $_.IPv4Address
                     Site                   = $_.Site
@@ -589,6 +589,10 @@ function Get-ADDomainInfo {
                     OperatingSystemVersion = $_.OperatingSystemVersion
                     Enabled                = $_.Enabled
                 }
+
+                Add-Member -InputObject $dc -MemberType ScriptMethod -Name "ToString" -Value {
+                    "HostName=$($this.HostName); IPv4=$($this.IPv4Address); Site=$($this.Site)"
+                } -String
             }
         }
         catch {
@@ -609,7 +613,7 @@ function Get-ADDomainInfo {
         # Add ToString method to domainInfo
         Add-Member -InputObject $domainInfo -MemberType ScriptMethod -Name "ToString" -Value {
             "DomainName=$($this.DomainName); DomainMode=$($this.DomainMode); PDCEmulator=$($this.PDCEmulator); InfrastructureMaster=$($this.InfrastructureMaster); DCs=$($this.DomainControllers.Count); OUs=$($this.OrganizationalUnits.Count)"
-        }
+        } -Force
 
         return $domainInfo
     }
@@ -637,8 +641,8 @@ function Get-ADOUInfo {
 
             # Add ToString method to each OU object
             Add-Member -InputObject $ouObject -MemberType ScriptMethod -Name "ToString" -Value {
-                "Name=$($this.Name); DN=$($this.DistinguishedName); Children=$($this.ChildOUs.Split(',').Count)"
-            }
+                "Name=$($this.Name); Children=$($this.ChildOUs.Split(',').Count)"
+            } -Force
 
             $ouObject
         }
@@ -675,10 +679,9 @@ function Get-ADForestInfo {
                 DistinguishedName   = $_.DistinguishedName
             }
             
-            # Add ToString method
             Add-Member -InputObject $info -MemberType ScriptMethod -Name "ToString" -Value {
                 "Name=$($this.Name); ForestMode=$($this.ForestMode); SchemaMaster=$($this.SchemaMaster); GlobalCatalogs=$($this.GlobalCatalogs.Count); Domains=$($this.Domains.Count)"
-            }
+            } -Force
             
             $info
         }
@@ -744,7 +747,7 @@ function Get-ADSiteInfo {
         # Add ToString method to siteTopology
         Add-Member -InputObject $siteTopology -MemberType ScriptMethod -Name "ToString" -Value {
             "Sites=$($this.Sites.Count); TotalSites=$($this.TotalSites); TotalSubnets=$($this.TotalSubnets); TotalSiteLinks=$($this.TotalSiteLinks); TotalReplConnections=$($this.TotalReplConnections)"
-        }
+        } -Force
 
         return $siteTopology
     }
@@ -777,10 +780,9 @@ function Get-ADTrustInfo {
                 DistinguishedName  = $_.DistinguishedName
             }
             
-            # Add ToString method
             Add-Member -InputObject $info -MemberType ScriptMethod -Name "ToString" -Value {
                 "Name=$($this.Name); Source=$($this.Source); Target=$($this.Target); TrustType=$($this.TrustType); Direction=$($this.Direction)"
-            }
+            } -Force
             
             $info
         }
@@ -822,7 +824,8 @@ function Get-ADComputers {
             'Modified',
             'DNSHostName',
             'SID',
-            'ServicePrincipalNames'
+            'ServicePrincipalNames',
+            'MemberOf'  # Added MemberOf property
         )
 
         $computers = Invoke-WithRetry -ScriptBlock {
@@ -845,14 +848,16 @@ function Get-ADComputers {
                     Modified               = $computer.Modified
                     DistinguishedName      = $computer.DistinguishedName
                     ServicePrincipalNames  = $computer.ServicePrincipalNames
+                    MemberOf               = $computer.MemberOf  # Added MemberOf property
                     AccessStatus           = "Success"
-                    NetworkStatus          = "Unknown" # initial status
-                    IsAlive                = $false     # initial state, not tested yet
+                    NetworkStatus          = "Unknown"
+                    IsAlive                = $false
                 }
 
+                # Updated ToString method to include group membership count
                 Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
-                    "Name=$($this.Name); NetworkStatus=$($this.NetworkStatus); IsAlive=$($this.IsAlive)"
-                }
+                    "Name=$($this.Name); NetworkStatus=$($this.NetworkStatus); IsAlive=$($this.IsAlive); Groups=$($this.MemberOf.Count)"
+                } -Force
 
                 $computerObject
             }
@@ -871,19 +876,20 @@ function Get-ADComputers {
                     Modified               = $null
                     DistinguishedName      = $computer.DistinguishedName
                     ServicePrincipalNames  = $null
+                    MemberOf               = @()  # Empty array for error cases
                     AccessStatus           = "Access Error: $($_.Exception.Message)"
                     NetworkStatus          = "Error"
                     IsAlive                = $false
                 }
 
                 Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
-                    "Name=$($this.Name); NetworkStatus=Error; IsAlive=$($this.IsAlive)"
-                }
+                    "Name=$($this.Name); NetworkStatus=Error; IsAlive=$($this.IsAlive); Groups=0"
+                } -Force 
 
                 $computerObject
             }
         }
-        
+
         return $computerObjects
     }
     catch {
@@ -943,7 +949,7 @@ function Get-ADGroupsAndMembers {
 
                 Add-Member -InputObject $groupObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "Name=$($this.Name); Category=$($this.GroupCategory); Scope=$($this.GroupScope); Members=$($this.TotalNestedMemberCount)"
-                }
+                } -Force
 
                 $groupObject
             }
@@ -965,7 +971,7 @@ function Get-ADGroupsAndMembers {
 
                 Add-Member -InputObject $groupObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "Name=$($this.Name); Status=Error"
-                }
+                } -Force
 
                 $groupObject
             }
@@ -1039,7 +1045,7 @@ function Get-ADUsers {
 
                 Add-Member -InputObject $userObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "SamAccountName=$($this.SamAccountName); Status=$($this.AccountStatus); Groups=$($this.MemberOf.Count)"
-                }
+                } -Force
 
                 $userObject
             }
@@ -1062,7 +1068,7 @@ function Get-ADUsers {
 
                 Add-Member -InputObject $userObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "SamAccountName=$($this.SamAccountName); Status=Error; Groups=0"
-                }
+                } -Force
 
                 $userObject
             }
@@ -1085,8 +1091,7 @@ function Get-DomainReport {
     [CmdletBinding()]
     param(
         [ValidateScript({ Test-Path $_ })]
-        [string]$ExportPath = $script:Config.ExportPath,
-        [switch]$UseParallel
+        [string]$ExportPath = $script:Config.ExportPath
     )
 
     try {
@@ -1108,71 +1113,19 @@ function Get-DomainReport {
             'SecurityConfig' = { Get-ADSecurityConfiguration }
         }
 
-        # Collect data either in parallel or sequentially
-        if ($UseParallel) {
-            Write-Log "Starting parallel data collection..." -Level Info
-
-            # Instead of converting to string, just store the scriptblock directly:
-            $componentScripts = $components.GetEnumerator() | ForEach-Object {
-                [PSCustomObject]@{
-                    Name        = $_.Key
-                    ScriptBlock = $_.Value # $_.Value is already a scriptblock
-                }
+        # Sequential collection
+        foreach ($component in $components.Keys) {
+            $componentSw = [System.Diagnostics.Stopwatch]::StartNew()
+            try {
+                Write-Log "Collecting $component..." -Level Info
+                $results[$component] = & $components[$component]
+                $componentTiming[$component] = Convert-MillisecondsToReadable -Milliseconds $componentSw.ElapsedMilliseconds
             }
-
-            # Now in the parallel block, just run it directly:
-            $parallelResults = $componentScripts | ForEach-Object -ThrottleLimit $script:Config.MaxConcurrentJobs -Parallel {
-                $component = $_.Name
-                $scriptBlock = $_.ScriptBlock
-                $componentSw = [System.Diagnostics.Stopwatch]::StartNew()
-
-                try {
-                    $data = & $scriptBlock
-                    @{
-                        Name          = $component
-                        Data          = $data
-                        Error         = $null
-                        ExecutionTime = $componentSw.ElapsedMilliseconds
-                    }
-                }
-                catch {
-                    @{
-                        Name          = $component
-                        Data          = $null
-                        Error         = $_.Exception.Message
-                        ExecutionTime = $componentSw.ElapsedMilliseconds
-                    }
-                }
-            }
-
-            # Process parallel results
-            foreach ($result in $parallelResults) {
-                if ($result.Error) {
-                    $errors[$result.Name] = $result.Error
-                    Write-Log "Error collecting $($result.Name): $($result.Error)" -Level Error
-                    if (-not $ContinueOnError) { throw $result.Error }
-                }
-                else {
-                    $results[$result.Name] = $result.Data
-                }
-                $componentTiming[$result.Name] = $result.ExecutionTime
-            }
-        }
-        else {
-            # Sequential collection
-            foreach ($component in $components.Keys) {
-                $componentSw = [System.Diagnostics.Stopwatch]::StartNew()
-                try {
-                    Write-Log "Collecting $component..." -Level Info
-                    $results[$component] = & $components[$component]
-                    $componentTiming[$component] = $componentSw.ElapsedMilliseconds
-                }
-                catch {
-                    $errors[$component] = $_.Exception.Message
-                    $componentTiming[$component] = $componentSw.ElapsedMilliseconds
-                    Write-Log "Error collecting ${component}: $($_.Exception.Message)" -Level Error
-                    if (-not $ContinueOnError) { throw }
-                }
+            catch {
+                $errors[$component] = $_.Exception.Message
+                $componentTiming[$component] = Convert-MillisecondsToReadable -Milliseconds $componentSw.ElapsedMilliseconds
+                Write-Log "Error collecting ${component}: $($_.Exception.Message)" -Level Error
+                if (-not $ContinueOnError) { throw }
             }
         }
 
@@ -1182,7 +1135,7 @@ function Get-DomainReport {
             CollectionStatus   = if ($errors.Count -eq 0) { "Complete" } else { "Partial" }
             Errors             = $errors
             PerformanceMetrics = $componentTiming
-            TotalExecutionTime = $sw.ElapsedMilliseconds
+            TotalExecutionTime = Convert-MillisecondsToReadable -Milliseconds $sw.ElapsedMilliseconds
             BasicInfo          = [PSCustomObject]@{
                 ForestInfo = $results['ForestInfo']
                 TrustInfo  = $results['TrustInfo']
@@ -1230,16 +1183,30 @@ function Get-DomainReport {
     }
 }
 
-# Example usage:
-# $report = Get-DomainReport -UseParallel 
-
+# Main method addition function
 function Add-DomainReportMethods {
     param (
         [Parameter(Mandatory)]
         [PSCustomObject]$DomainReport
     )
+    
+    # Add ToString methods
+    Add-ToStringMethods -DomainReport $DomainReport
+    
+    # Add Search methods
+    Add-SearchMethods -DomainReport $DomainReport
+    
+    # Add Network methods
+    Add-NetworkMethods -DomainReport $DomainReport
+    
+    # Add Security methods
+    Add-SecurityMethods -DomainReport $DomainReport
+}
 
-    # Add custom ToString() method for BasicInfo
+# Individual method groups
+function Add-ToStringMethods {
+    param ($DomainReport)
+    
     $basicInfoToString = {
         $forest = if ($this.ForestInfo.Name) { $this.ForestInfo.Name } else { "N/A" }
         $domain = if ($this.DomainInfo.DomainName) { $this.DomainInfo.DomainName } else { "N/A" }
@@ -1249,7 +1216,6 @@ function Add-DomainReportMethods {
         return "forest=$forest, domain=$domain, sites=$sites, trusts=$trusts"
     }
 
-    # Add custom ToString() method for DomainObjects
     $domainObjectsToString = {
         $users = if ($this.Users) { $this.Users.Count } else { "0" }
         $computers = if ($this.Computers) { $this.Computers.Count } else { "0" }
@@ -1258,56 +1224,191 @@ function Add-DomainReportMethods {
         return "users=$users, computers=$computers, groups=$groups"
     }
 
-    # Add custom ToString() method for SecuritySettings
     $securitySettingsToString = {
-        $spns = if ($this.SecurityConfig.SPNConfiguration) { 
-            $this.SecurityConfig.SPNConfiguration.Count 
-        }
-        else { 
-            "0" 
-        }
-        
-        $acls = if ($this.SecurityConfig.ObjectACLs) { 
-            $this.SecurityConfig.ObjectACLs.Count 
-        }
-        else { 
-            "0" 
-        }
-        
+        $spns = if ($this.SecurityConfig.SPNConfiguration) { $this.SecurityConfig.SPNConfiguration.Count } else { "0" }
+        $acls = if ($this.SecurityConfig.ObjectACLs) { $this.SecurityConfig.ObjectACLs.Count } else { "0" }
         return "SPNs=$spns, ACLs=$acls"
     }
-    # Add the ToString methods to each object
+
     Add-Member -InputObject $DomainReport.BasicInfo -MemberType ScriptMethod -Name "ToString" -Value $basicInfoToString -Force
     Add-Member -InputObject $DomainReport.DomainObjects -MemberType ScriptMethod -Name "ToString" -Value $domainObjectsToString -Force
     Add-Member -InputObject $DomainReport.SecuritySettings -MemberType ScriptMethod -Name "ToString" -Value $securitySettingsToString -Force
+}
 
-    # Define a scriptblock for scanning common ports on all computers
-    $scanPorts = {
+function Add-SearchMethods {
+    param ($DomainReport)
+    
+    $searchUsers = {
+        param([Parameter(Mandatory)][string]$SearchTerm)
+        
+        if (-not $this.DomainObjects.Users) {
+            Write-Log "No user data available to search" -Level Warning
+            return $null
+        }
+        
+        $results = $this.DomainObjects.Users | Where-Object {
+            $_.SamAccountName -like "*$SearchTerm*" -or
+            $_.DisplayName -like "*$SearchTerm*" -or
+            $_.EmailAddress -like "*$SearchTerm*"
+        }
+        
+        if (-not $results) {
+            Write-Log "No users found matching search term: '$SearchTerm'" -Level Info
+            return $null
+        }
+        return $results
+    }
+
+    $searchComputers = {
+        param([Parameter(Mandatory)][string]$SearchTerm)
+        
+        if (-not $this.DomainObjects.Computers) {
+            Write-Log "No computer data available to search" -Level Warning
+            return $null
+        }
+        
+        $results = $this.DomainObjects.Computers | Where-Object {
+            $_.Name -like "*$SearchTerm*" -or
+            $_.IPv4Address -like "*$SearchTerm*" -or
+            $_.DNSHostName -like "*$SearchTerm*"
+        }
+        
+        if (-not $results) {
+            Write-Log "No computers found matching search term: '$SearchTerm'" -Level Info
+            return $null
+        }
+        return $results
+    }
+
+    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "SearchUsers" -Value $searchUsers -Force
+    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "SearchComputers" -Value $searchComputers -Force
+}
+
+function Add-NetworkMethods {
+    param ($DomainReport)
+    
+    $networkMethods = @{
+        TestTargetConnection = Get-TestTargetConnectionMethod
+        TestConnections      = Get-TestConnectionsMethod
+        ScanCommonPorts      = Get-ScanCommonPortsMethod
+        ScanTargetPorts      = Get-ScanTargetPortsMethod
+    }
+
+    foreach ($method in $networkMethods.GetEnumerator()) {
+        Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name $method.Key -Value $method.Value -Force
+    }
+}
+
+function Add-SecurityMethods {
+    param ($DomainReport)
+    
+    $securityMethods = @{
+        FindSuspiciousSPNs    = Get-FindSuspiciousSPNsMethod
+        DisplaySuspiciousSPNs = Get-DisplaySuspiciousSPNsMethod
+    }
+
+    foreach ($method in $securityMethods.GetEnumerator()) {
+        Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name $method.Key -Value $method.Value -Force
+    }
+}
+
+# Helper functions for network methods
+function Get-TestTargetConnectionMethod {
+    return {
+        param(
+            [Parameter(Mandatory = $true)]
+            $ADComputer
+        )
+
+        $target = if ($ADComputer.DNSHostName) { $ADComputer.DNSHostName } else { $ADComputer.Name }
+
+        if ([string]::IsNullOrEmpty($target)) {
+            Write-Log "Invalid target. The specified ADComputer has no resolvable DNSHostName or Name." -Level Warning
+            return $null
+        }
+
+        $reachable = Test-Connection -ComputerName $target -Count 1 -Quiet -ErrorAction SilentlyContinue
+
+        $ADComputer.IsAlive = $reachable
+        $ADComputer.NetworkStatus = if ($reachable) { "Online" } else { "Offline/Unreachable" }
+
+        return [PSCustomObject]@{
+            Computer      = $target
+            IsAlive       = $ADComputer.IsAlive
+            NetworkStatus = $ADComputer.NetworkStatus
+        }
+    }
+}
+
+function Get-TestConnectionsMethod {
+    return {
+        if (-not $this.DomainObjects.Computers) {
+            Write-Log "No computers found in the domain report. Cannot test connections." -Level Warning
+            return $null
+        }
+
+        $results = @()
+        foreach ($comp in $this.DomainObjects.Computers) {
+            $target = if ($comp.DNSHostName) { $comp.DNSHostName } else { $comp.Name }
+
+            if ([string]::IsNullOrEmpty($target)) {
+                Write-Log "Skipping $($comp.Name) due to no valid DNSHostName or Name." -Level Warning
+                $comp.IsAlive = $false
+                $comp.NetworkStatus = "Invalid Target"
+                $results += [PSCustomObject]@{
+                    Computer      = $comp.Name
+                    IsAlive       = $comp.IsAlive
+                    NetworkStatus = $comp.NetworkStatus
+                }
+                continue
+            }
+
+            $reachable = Test-Connection -ComputerName $target -Count 1 -Quiet -ErrorAction SilentlyContinue
+            
+            $comp.IsAlive = $reachable
+            $comp.NetworkStatus = if ($reachable) { "Online" } else { "Offline/Unreachable" }
+
+            $results += [PSCustomObject]@{
+                Computer      = $target
+                IsAlive       = $comp.IsAlive
+                NetworkStatus = $comp.NetworkStatus
+            }
+        }
+
+        if (-not $this.PSObject.Properties.Name.Contains('NetworkConnectivityResults')) {
+            Add-Member -InputObject $this -MemberType NoteProperty -Name 'NetworkConnectivityResults' -Value $results
+        }
+        else {
+            $this.NetworkConnectivityResults = $results
+        }
+
+        return $results
+    }
+}
+
+function Get-ScanCommonPortsMethod {
+    return {
         param(
             [int[]]$Ports = (80, 443, 445, 3389, 5985),
             [int]$Timeout = 1000
         )
 
-        # Verify we have DomainObjects.Computers
         if (-not $this.DomainObjects.Computers) {
-            Write-Host "No computers found in the domain report. Cannot scan ports."
+            Write-Log "No computers found in the domain report. Cannot scan ports." -Level Warning
             return $null
         }
 
         $results = @()
-
         foreach ($comp in $this.DomainObjects.Computers) {
-            # Check if the host is alive before scanning
             if (-not $comp.IsAlive) {
-                Write-Host "Skipping $($comp.Name) because IsAlive=$($comp.IsAlive)"
+                Write-Log "Skipping $($comp.Name) because IsAlive=$($comp.IsAlive)" -Level Info
                 continue
             }
 
-            # Determine the target hostname or name
             $target = if ($comp.DNSHostName) { $comp.DNSHostName } else { $comp.Name }
 
             if ([string]::IsNullOrEmpty($target)) {
-                Write-Host "Invalid target for $($comp.Name): No resolvable DNSHostName or Name."
+                Write-Log "Invalid target for $($comp.Name): No resolvable DNSHostName or Name." -Level Warning
                 continue
             }
 
@@ -1346,7 +1447,6 @@ function Add-DomainReportMethods {
             }
         }
 
-        # Store results in the domain report
         if (-not $this.PSObject.Properties.Name.Contains('NetworkPortScanResults')) {
             Add-Member -InputObject $this -MemberType NoteProperty -Name 'NetworkPortScanResults' -Value $results
         }
@@ -1356,9 +1456,10 @@ function Add-DomainReportMethods {
 
         return $this.NetworkPortScanResults
     }
+}
 
-    # Define a scriptblock for scanning ports on a single target
-    $scanTargetPorts = {
+function Get-ScanTargetPortsMethod {
+    return {
         param(
             [Parameter(Mandatory = $true)]
             $ADComputer,
@@ -1366,26 +1467,22 @@ function Add-DomainReportMethods {
             [int[]]$Ports
         )
 
-        # Check if the host is alive before scanning
         if (-not $ADComputer.IsAlive) {
-            Write-Host "Skipping $($ADComputer.Name) because IsAlive=$($ADComputer.IsAlive)"
+            Write-Log "Skipping $($ADComputer.Name) because IsAlive=$($ADComputer.IsAlive)" -Level Warning
             return $null
         }
 
-        # Determine the target hostname or name
         $target = if ($ADComputer.DNSHostName) { $ADComputer.DNSHostName } else { $ADComputer.Name }
 
         if ([string]::IsNullOrEmpty($target)) {
-            Write-Host "Invalid target. The specified ADComputer has no resolvable DNSHostName or Name."
+            Write-Log "Invalid target. The specified ADComputer has no resolvable DNSHostName or Name." -Level Warning
             return $null
         }
 
         $results = @()
-
         foreach ($port in $Ports) {
             $tcp = New-Object System.Net.Sockets.TcpClient
             try {
-                # Attempt connection with a 1 second timeout
                 $asyncResult = $tcp.BeginConnect($target, $port, $null, $null)
                 $wait = $asyncResult.AsyncWaitHandle.WaitOne(1000)
 
@@ -1419,9 +1516,10 @@ function Add-DomainReportMethods {
 
         return $results
     }
+}
 
-    # Add method to find suspicious SPNs
-    $findSuspiciousSPNs = {
+function Get-FindSuspiciousSPNsMethod {
+    return {
         $spnResults = Find-SuspiciousSPNs -Computers $this.DomainObjects.Computers -Users $this.DomainObjects.Users
         
         if (-not $this.SecuritySettings.PSObject.Properties.Name.Contains('SuspiciousSPNs')) {
@@ -1433,8 +1531,10 @@ function Add-DomainReportMethods {
         
         return $spnResults
     }
+}
 
-    $displaySuspiciousSPNs = {
+function Get-DisplaySuspiciousSPNsMethod {
+    return {
         if (-not $this.SecuritySettings.PSObject.Properties.Name.Contains('SuspiciousSPNs')) {
             Write-Log "No suspicious SPNs found. Running FindSuspiciousSPNs..." -Level Info
             $this.FindSuspiciousSPNs()
@@ -1444,7 +1544,7 @@ function Add-DomainReportMethods {
             Write-Log "`nSuspicious SPNs Found:" -Level Warning
             $this.SecuritySettings.SuspiciousSPNs | ForEach-Object {
                 Write-Log "`nObject: $($_.ObjectName) ($($_.ObjectType))" -Level Warning
-                Write-Log "`nRisk Level: $($_.RiskLevel)" -Level $(if ($_.RiskLevel -eq 'High') { 'Error' } else { 'Warning' })
+                Write-Log "Risk Level: $($_.RiskLevel)" -Level $(if ($_.RiskLevel -eq 'High') { 'Error' } else { 'Warning' })
                 $_.SuspiciousSPNs.GetEnumerator() | ForEach-Object {
                     Write-Log "  SPN: $($_.Key)" -Level Warning
                     Write-Log "  Reason: $($_.Value)" -Level Warning
@@ -1455,11 +1555,57 @@ function Add-DomainReportMethods {
             Write-Log "`nNo suspicious SPNs found." -Level Info
         }
     }
+}
 
-    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "ScanCommonPorts" -Value $scanPorts -Force
-    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "ScanTargetPorts" -Value $scanTargetPorts -Force
-    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "FindSuspiciousSPNs" -Value $findSuspiciousSPNs
-    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "DisplaySuspiciousSPNs" -Value $displaySuspiciousSPNs
+#endregion
+
+
+#region Test-AdminRights.ps1
+
+function Test-AdminRights {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Username
+    )
+
+    $adminStatus = @{
+        IsADAdmin = $false
+        IsOUAdmin = $false
+        Username  = $Username
+    }
+
+    # Check ADAdmin status (Domain/Enterprise Admin membership)
+    try {
+        $user = Get-ADUser $Username -Properties MemberOf
+        $adminGroups = $user.MemberOf | Get-ADGroup | Select-Object -ExpandProperty Name
+        if ($adminGroups -match "Domain Admins|Enterprise Admins|Schema Admins|BUILTIN\\Administrators") {
+            $adminStatus.IsADAdmin = $true
+        }
+    }
+    catch {
+        Write-Warning "Error checking AD Admin status for $Username : $_"
+    }
+
+    # Check OUAdmin status (looking for OU-level permissions)
+    try {
+        $ouPermissions = Get-ADOrganizationalUnit -Filter * | ForEach-Object {
+            Get-ACL "AD:$($_.DistinguishedName)" | ForEach-Object {
+                $_.Access | Where-Object { 
+                    $_.IdentityReference -like "*$Username*" -and 
+                    $_.ActiveDirectoryRights -match "CreateChild|DeleteChild|WriteProperty"
+                }
+            }
+        }
+        if ($ouPermissions) {
+            $adminStatus.IsOUAdmin = $true
+        }
+    }
+    catch {
+        Write-Warning "Error checking OU Admin status for $Username : $_"
+    }
+
+    # Return results
+    return $adminStatus
 }
 
 #endregion
@@ -1527,6 +1673,17 @@ function Initialize-Environment {
     }
 }
 #endregion
+
+#endregion
+
+
+#region Convert-MillisecondsToReadable.ps1
+
+function Convert-MillisecondsToReadable {
+    param ([int64]$Milliseconds)
+    $timespan = [TimeSpan]::FromMilliseconds($Milliseconds)
+    return "$($timespan.Minutes) min $($timespan.Seconds) seconds"
+}
 
 #endregion
 

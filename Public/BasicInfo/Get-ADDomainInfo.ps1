@@ -10,7 +10,7 @@ function Get-ADDomainInfo {
         $domainControllers = try {
             Get-ADDomainController -Filter * -ErrorAction Stop | 
             ForEach-Object {
-                [PSCustomObject]@{
+                $dc = [PSCustomObject]@{
                     HostName               = $_.HostName
                     IPv4Address            = $_.IPv4Address
                     Site                   = $_.Site
@@ -19,6 +19,10 @@ function Get-ADDomainInfo {
                     OperatingSystemVersion = $_.OperatingSystemVersion
                     Enabled                = $_.Enabled
                 }
+
+                Add-Member -InputObject $dc -MemberType ScriptMethod -Name "ToString" -Value {
+                    "HostName=$($this.HostName); IPv4=$($this.IPv4Address); Site=$($this.Site)"
+                } -String
             }
         }
         catch {
@@ -67,7 +71,7 @@ function Get-ADOUInfo {
 
             # Add ToString method to each OU object
             Add-Member -InputObject $ouObject -MemberType ScriptMethod -Name "ToString" -Value {
-                "Name=$($this.Name); DN=$($this.DistinguishedName); Children=$($this.ChildOUs.Split(',').Count)"
+                "Name=$($this.Name); Children=$($this.ChildOUs.Split(',').Count)"
             } -Force
 
             $ouObject

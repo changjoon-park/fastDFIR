@@ -11,7 +11,7 @@ function Get-ADSecurityConfiguration {
         # Add ToString method to securityConfig
         Add-Member -InputObject $securityConfig -MemberType ScriptMethod -Name "ToString" -Value {
             "ObjectACLs=$($this.ObjectACLs.Count); FileShareACLs=$($this.FileShareACLs.Count); SPNs=$($this.SPNConfiguration.Count)"
-        }
+        } -Force
         
         return $securityConfig
     }
