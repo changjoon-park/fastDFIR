@@ -3,24 +3,23 @@ function Get-ADSiteInfo {
     param()
     
     try {
-        Write-Log "Retrieving AD site information..." -Level Info
+        Write-Log "Retrieving AD site information from cached data..." -Level Info
         
-        # Get all sites
-        $sites = Get-ADReplicationSite -Filter * -ErrorAction SilentlyContinue | 
-        ForEach-Object {
-            $site = $_
-            
-            # Get subnets for this site
-            $subnets = Get-ADReplicationSubnet -Filter "site -eq '$($site.DistinguishedName)'" | 
-            ForEach-Object {
+        # Use cached AllSites data instead of re-querying AD
+        $sites = foreach ($site in $script:AllSites) {
+            # Filter subnets that belong to this site using the cached AllSubnets
+            $subnets = $script:AllSubnets | Where-Object {
+                # Assuming each subnet object has a 'Site' property that references the site DN
+                $_.Site -eq $site.DistinguishedName
+            } | ForEach-Object {
                 [PSCustomObject]@{
                     Name        = $_.Name
                     Location    = $_.Location
                     Description = $_.Description
                 }
             }
-            
-            # Create the site object with all information
+
+            # Create the site object with all information using cached data
             [PSCustomObject]@{
                 Name                   = $site.Name
                 Description            = $site.Description
@@ -28,8 +27,11 @@ function Get-ADSiteInfo {
                 Created                = $site.Created
                 Modified               = $site.Modified
                 Subnets                = $subnets
-                SiteLinks              = (Get-ADReplicationSiteLink -Filter *)
-                ReplicationConnections = Get-ADReplicationConnection
+
+                # SiteLinks and ReplicationConnections were previously retrieved and stored
+                # If you need them per site, consider filtering them by a site-related property
+                SiteLinks              = $script:AllSiteLinks
+                ReplicationConnections = $script:AllReplConnections
                 DistinguishedName      = $site.DistinguishedName
             }
         }
@@ -43,7 +45,7 @@ function Get-ADSiteInfo {
             TotalReplConnections = ($sites.ReplicationConnections | Measure-Object).Count
         }
 
-        # Add ToString method to siteTopology
+        # Add a ToString method to siteTopology
         Add-Member -InputObject $siteTopology -MemberType ScriptMethod -Name "ToString" -Value {
             "Sites=$($this.Sites.Count); TotalSites=$($this.TotalSites); TotalSubnets=$($this.TotalSubnets); TotalSiteLinks=$($this.TotalSiteLinks); TotalReplConnections=$($this.TotalReplConnections)"
         } -Force

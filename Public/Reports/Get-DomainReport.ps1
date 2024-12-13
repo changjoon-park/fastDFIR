@@ -1,28 +1,100 @@
 function Get-DomainReport {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Collect')]
     param(
-        [ValidateScript({ Test-Path $_ })]
-        [string]$ExportPath = $script:Config.ExportPath
+        [Parameter(ParameterSetName = 'Collect')]
+        [switch]$Export,
+        
+        [Parameter(ParameterSetName = 'Import', Mandatory = $true)]
+        [string]$ImportPath
     )
 
+    # If importing from file
+    if ($PSCmdlet.ParameterSetName -eq 'Import') {
+        try {
+            Write-Log "Importing domain report from $ImportPath..." -Level Info
+            
+            if (-not (Test-Path $ImportPath)) {
+                throw "Import file not found: $ImportPath"
+            }
+
+            # Read and convert JSON content
+            $importedContent = Get-Content -Path $ImportPath -Raw | ConvertFrom-Json
+
+            # Create a new PSCustomObject with the imported data
+            $domainReport = [PSCustomObject]@{
+                CollectionTime     = [DateTime]::Parse($importedContent.CollectionTime)
+                CollectionStatus   = $importedContent.CollectionStatus
+                CollectionRights   = $importedContent.CollectionRights
+                Errors             = $importedContent.Errors
+                PerformanceMetrics = $importedContent.PerformanceMetrics
+                TotalExecutionTime = $importedContent.TotalExecutionTime
+                BasicInfo          = $importedContent.BasicInfo
+                DomainObjects      = $importedContent.DomainObjects
+                SecuritySettings   = $importedContent.SecuritySettings
+                ReportGeneration   = $importedContent.ReportGeneration
+            }
+
+            # Add methods back to the imported object
+            Add-DomainReportMethods -DomainReport $domainReport
+
+            Write-Log "Successfully imported domain report from $ImportPath" -Level Info
+            return $domainReport
+        }
+        catch {
+            Write-Log "Error importing domain report: $($_.Exception.Message)" -Level Error
+            throw
+        }
+    }
+
     try {
+        # Check admin rights first
+        Write-Log "Checking administrative rights..." -Level Info
+        $currentUser = $env:USERNAME
+        $adminRights = Test-AdminRights -Username $currentUser
+        
+        # Define components based on admin rights
+        $components = @{}
+        
+        # Basic components available to all authenticated users
+        $components['DomainInfo'] = { Get-ADDomainInfo }
+        
+        if ($adminRights.IsADAdmin) {
+            Write-Log "Full administrative rights detected - collecting all data" -Level Info
+            # Full access components
+            $components += @{
+                'ForestInfo'     = { Get-ADForestInfo }
+                'TrustInfo'      = { Get-ADTrustInfo }
+                'Sites'          = { Get-ADSiteInfo }
+                'Users'          = { Get-ADUsers }
+                'Computers'      = { Get-ADComputers }
+                'Groups'         = { Get-ADGroupsAndMembers }
+                'PolicyInfo'     = { Get-ADPolicyInfo }
+                'SecurityConfig' = { Get-ADSecurityConfiguration }
+            }
+        }
+        elseif ($adminRights.IsOUAdmin) {
+            Write-Log "OU Admin rights detected - collecting permitted data" -Level Info
+            # Limited access components
+            $components += @{
+                'Users'     = { Get-ADUsers }
+                'Computers' = { Get-ADComputers }
+                'Groups'    = { Get-ADGroupsAndMembers }
+            }
+        }
+        else {
+            Write-Log "Basic user rights detected - limited data collection" -Level Warning
+            # Basic components only
+            $components += @{
+                'Users'  = { Get-ADUsers -BasicInfoOnly }
+                'Groups' = { Get-ADGroupsAndMembers -BasicInfoOnly }
+            }
+        }
+
         # Initialize tracking variables
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $results = @{}
         $errors = @{}
         $componentTiming = @{}
-
-        # Define collection components
-        $components = @{
-            'ForestInfo'     = { Get-ADForestInfo }
-            'TrustInfo'      = { Get-ADTrustInfo }
-            'Sites'          = { Get-ADSiteInfo }
-            'DomainInfo'     = { Get-ADDomainInfo }
-            'Users'          = { Get-ADUsers }
-            'Computers'      = { Get-ADComputers }
-            'Groups'         = { Get-ADGroupsAndMembers }
-            'SecurityConfig' = { Get-ADSecurityConfiguration }
-        }
 
         # Sequential collection
         foreach ($component in $components.Keys) {
@@ -44,6 +116,7 @@ function Get-DomainReport {
         $domainReport = [PSCustomObject]@{
             CollectionTime     = Get-Date
             CollectionStatus   = if ($errors.Count -eq 0) { "Complete" } else { "Partial" }
+            CollectionRights   = $adminRights
             Errors             = $errors
             PerformanceMetrics = $componentTiming
             TotalExecutionTime = Convert-MillisecondsToReadable -Milliseconds $sw.ElapsedMilliseconds
@@ -59,27 +132,26 @@ function Get-DomainReport {
                 Groups    = $results['Groups']
             }
             SecuritySettings   = [PSCustomObject]@{
+                PolicyInfo     = $results['PolicyInfo']
                 SecurityConfig = $results['SecurityConfig']
             }
         }
 
         # Add report generation metadata
         Add-Member -InputObject $domainReport -MemberType NoteProperty -Name "ReportGeneration" -Value @{
-            GeneratedBy       = $env:USERNAME
+            GeneratedBy       = $currentUser
             GeneratedOn       = Get-Date
             ComputerName      = $env:COMPUTERNAME
             PowerShellVersion = $PSVersionTable.PSVersion.ToString()
+            UserRights        = $adminRights
         }
 
         # Add methods to the report object
         Add-DomainReportMethods -DomainReport $domainReport
 
-
-        # Export the report if requested
-        if ($ExportPath) {
-            $exportFile = Join-Path $ExportPath ("DomainReport_{0}.json" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
-            $domainReport | ConvertTo-Json -Depth 10 | Out-File $exportFile
-            Write-Log "Report exported to: $exportFile" -Level Info
+        # Export if switch is set
+        if ($Export) {
+            $domainReport.Export()  # Use the Export method with default path
         }
 
         return $domainReport
@@ -103,6 +175,9 @@ function Add-DomainReportMethods {
     
     # Add ToString methods
     Add-ToStringMethods -DomainReport $DomainReport
+
+    # Add Export methods
+    Add-ExportMethod -DomainReport $DomainReport
     
     # Add Search methods
     Add-SearchMethods -DomainReport $DomainReport
@@ -144,6 +219,62 @@ function Add-ToStringMethods {
     Add-Member -InputObject $DomainReport.BasicInfo -MemberType ScriptMethod -Name "ToString" -Value $basicInfoToString -Force
     Add-Member -InputObject $DomainReport.DomainObjects -MemberType ScriptMethod -Name "ToString" -Value $domainObjectsToString -Force
     Add-Member -InputObject $DomainReport.SecuritySettings -MemberType ScriptMethod -Name "ToString" -Value $securitySettingsToString -Force
+}
+
+function Add-ExportMethod {
+    param ($DomainReport)
+    
+    $exportReport = {
+        param(
+            [string]$ExportPath
+        )
+            
+        try {
+            Write-Log "Starting export operation..." -Level Info
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Initializing export..."
+
+            # Use provided path or default from config
+            $finalPath = if ($ExportPath) {
+                $ExportPath
+            }
+            else {
+                $script:Config.ExportPath
+            }
+
+            # Ensure export directory exists
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Checking export directory..." -PercentComplete 20
+            if (-not (Test-Path $finalPath)) {
+                New-Item -ItemType Directory -Path $finalPath -Force | Out-Null
+                Write-Log "Created export directory: $finalPath" -Level Info
+            }
+    
+            # Prepare export file path
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Preparing export file..." -PercentComplete 40
+            $exportFile = Join-Path $finalPath ("DomainReport_{0}.json" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+            
+            # Convert to JSON
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Converting report to JSON..." -PercentComplete 60
+            $jsonContent = $this | ConvertTo-Json -Depth 10
+
+            # Write to file
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Writing to file..." -PercentComplete 80
+            $jsonContent | Out-File $exportFile
+
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Export completed" -PercentComplete 100
+            Write-Log "Report successfully exported to: $exportFile" -Level Info
+
+            # Complete the progress bar
+            Show-ProgressHelper -Activity "Domain Report Export" -Completed
+            return $exportFile
+        }
+        catch {
+            Write-Log "Error exporting report: $($_.Exception.Message)" -Level Error
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Export failed" -Completed
+            return $null
+        }
+    }
+
+    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "Export" -Value $exportReport -Force
 }
 
 function Add-SearchMethods {
@@ -191,8 +322,31 @@ function Add-SearchMethods {
         return $results
     }
 
+    $searchGroups = {
+        param([Parameter(Mandatory)][string]$SearchTerm)
+        
+        if (-not $this.DomainObjects.Groups) {
+            Write-Log "No group data available to search" -Level Warning
+            return $null
+        }
+        
+        $results = $this.DomainObjects.Groups | Where-Object {
+            $_.Name -like "*$SearchTerm*" -or
+            $_.Description -like "*$SearchTerm*" -or
+            $_.GroupCategory -like "*$SearchTerm*" -or
+            $_.GroupScope -like "*$SearchTerm*"
+        }
+        
+        if (-not $results) {
+            Write-Log "No groups found matching search term: '$SearchTerm'" -Level Info
+            return $null
+        }
+        return $results
+    }
+
     Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "SearchUsers" -Value $searchUsers -Force
     Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "SearchComputers" -Value $searchComputers -Force
+    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "SearchGroups" -Value $searchGroups -Force
 }
 
 function Add-NetworkMethods {

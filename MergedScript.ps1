@@ -1,9 +1,9 @@
-# Merged Script - Created 2024-12-12 22:12:32
+# Merged Script - Created 2024-12-13 00:53:18
 
 
 #region MergedScript.ps1
 
-# Merged Script - Created 2024-12-12 22:12:32
+# Merged Script - Created 2024-12-13 00:53:18
 
 
 #region MergedScript.ps1
@@ -245,38 +245,206 @@ function Find-SuspiciousSPNs {
 
 #region Get-ADPolicyInfo.ps1
 
+function Get-GPOLinks {
+    param (
+        [Parameter(Mandatory)]
+        $GPO,
+
+        [Parameter(Mandatory)]
+        [xml]$XmlReport
+    )
+
+    try {
+        # Links are usually found under <GPO><LinksTo> in the XML report
+        $linksNode = $XmlReport.GPO.LinksTo
+        if ($linksNode -and $linksNode.Link) {
+            $linksNode.Link | ForEach-Object {
+                [PSCustomObject]@{
+                    Location   = $_.SOMPath
+                    Enabled    = $_.Enabled
+                    NoOverride = $_.NoOverride
+                    Type       = switch -Regex ($_.SOMPath) {
+                        '^[^/]+$' { 'Domain' }
+                        '^OU=' { 'OU' }
+                        '^CN=Sites' { 'Site' }
+                        default { 'Unknown' }
+                    }
+                }
+            }
+        }
+    }
+    catch {
+        Write-Log "Error getting GPO links for $($GPO.DisplayName): $($_.Exception.Message)" -Level Warning
+        return $null
+    }
+}
+
 function Get-ADPolicyInfo {
     try {
-        Write-Log "Retrieving AD policy information..." -Level Info
+        Write-Log "Retrieving AD Group Policy Object information..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing policy retrieval..."
 
         # Get all GPOs
         $gpos = Get-GPO -All | ForEach-Object {
             $gpo = $_
-            
-            # Get GPO links
-            $gpoLinks = Get-GPOLinks -GPO $gpo
-            
-            # Get detailed settings
+            Show-ProgressHelper -Activity "Processing GPOs" -Status "Processing $($gpo.DisplayName)"
+
+            # Retrieve GPO Report Once
             $report = Get-GPOReport -Guid $gpo.Id -ReportType XML
             [xml]$xmlReport = $report
-            
-            # Extract specific policy settings
-            $passwordPolicy = Get-PasswordPolicyFromGPO -GPOReport $xmlReport
-            $auditPolicy = Get-AuditPolicyFromGPO -GPOReport $xmlReport
-            
+
+            # Get GPO links using the pre-fetched XML
+            $gpoLinks = Get-GPOLinks -GPO $gpo -XmlReport $xmlReport
+
+            # Extract password policy settings inline
+            $passwordPolicies = $xmlReport.SelectNodes("//SecurityOptions/SecurityOption[contains(Name, 'Password')]")
+            $passwordPolicy = $passwordPolicies | ForEach-Object {
+                [PSCustomObject]@{
+                    Setting = $_.Name
+                    State   = $_.State
+                    Value   = $_.SettingNumber
+                }
+            }
+
+            # Extract audit policy settings inline
+            $auditPolicies = $xmlReport.SelectNodes("//AuditSetting")
+            $auditPolicy = $auditPolicies | ForEach-Object {
+                [PSCustomObject]@{
+                    Category     = $_.SubcategoryName
+                    AuditSuccess = [bool]($_.SettingValue -band 1)
+                    AuditFailure = [bool]($_.SettingValue -band 2)
+                }
+            }
+
+            # Get WMI Filters
+            $wmiFilters = if ($gpo.WmiFilter) {
+                [PSCustomObject]@{
+                    Name             = $gpo.WmiFilter.Name
+                    Description      = $gpo.WmiFilter.Description
+                    Query            = $gpo.WmiFilter.Query
+                    Author           = $gpo.WmiFilter.Author
+                    CreationTime     = $gpo.WmiFilter.CreationTime
+                    LastModifiedTime = $gpo.WmiFilter.LastModifiedTime
+                }
+            }
+
+            # Get GPO Permissions (assuming Get-GPPermissions is defined elsewhere)
+            $gpoPermissions = Get-GPPermissions -Guid $gpo.Id -All | ForEach-Object {
+                [PSCustomObject]@{
+                    Trustee        = $_.Trustee.Name
+                    Permission     = $_.Permission
+                    Inherited      = $_.Inherited
+                    DelegationType = $_.TrusteeType
+                }
+            }
+
+            # Get Scripts Configuration
+            $scriptPolicies = $xmlReport.SelectNodes("//Scripts") | ForEach-Object {
+                # Ensure the script path is valid before hashing
+                $hashValue = $null
+                if (Test-Path $_.Command) {
+                    $hashValue = (Get-FileHash -Path $_.Command -ErrorAction SilentlyContinue).Hash
+                }
+
+                [PSCustomObject]@{
+                    Type             = $_.Type
+                    Command          = $_.Command
+                    Parameters       = $_.Parameters
+                    ExecutionContext = $_.RunAs
+                    Hash             = $hashValue
+                }
+            }
+
+            # Get Registry Settings
+            $registrySettings = $xmlReport.SelectNodes("//RegistrySettings/Registry") | ForEach-Object {
+                [PSCustomObject]@{
+                    KeyPath   = $_.KeyPath
+                    ValueName = $_.ValueName
+                    Value     = $_.Value
+                    Type      = $_.Type
+                    Action    = $_.Action
+                }
+            }
+
+            # Get File System Changes
+            $fileOperations = $xmlReport.SelectNodes("//FileSecurity") | ForEach-Object {
+                [PSCustomObject]@{
+                    Path               = $_.Path
+                    PropagationMode    = $_.PropagationMode
+                    SecurityDescriptor = $_.SecurityDescriptor
+                    AceType            = $_.AccessControlEntry.Type
+                    Rights             = $_.AccessControlEntry.Rights
+                }
+            }
+
+            # Get Service Configurations
+            $serviceSettings = $xmlReport.SelectNodes("//NTServices/NTService") | ForEach-Object {
+                [PSCustomObject]@{
+                    ServiceName        = $_.Name
+                    StartupType        = $_.StartupType
+                    ServiceAction      = $_.ServiceAction
+                    SecurityDescriptor = $_.SecurityDescriptor
+                }
+            }
+
+            # Get Administrative Template Settings
+            $adminTemplates = $xmlReport.SelectNodes("//AdminTemplatePolicies/Policy") | ForEach-Object {
+                [PSCustomObject]@{
+                    Name       = $_.Name
+                    State      = $_.State
+                    Category   = $_.Category
+                    Class      = $_.Class
+                    Parameters = $_.Parameters
+                }
+            }
+
+            # Get Software Installation Settings
+            $softwareInstallation = $xmlReport.SelectNodes("//SoftwareInstallation/Package") | ForEach-Object {
+                [PSCustomObject]@{
+                    Name           = $_.Name
+                    ProductCode    = $_.ProductCode
+                    DeploymentType = $_.DeploymentType
+                    Action         = $_.Action
+                    SourcePath     = $_.SourcePath
+                }
+            }
+
+            # Get Network Settings (Drive Mappings)
+            $networkSettings = $xmlReport.SelectNodes("//DriveMapSettings/DriveMap") | ForEach-Object {
+                [PSCustomObject]@{
+                    DriveLetter = $_.DriveLetter
+                    Path        = $_.Path
+                    Label       = $_.Label
+                    Persistent  = $_.Persistent
+                    Action      = $_.Action
+                }
+            }
+
+            # Determine if Computer/User settings are enabled based on GpoStatus
+            $computerEnabled = ($gpo.GpoStatus -ne [Microsoft.GroupPolicy.GpoStatus]"ComputerSettingsDisabled" -and $gpo.GpoStatus -ne [Microsoft.GroupPolicy.GpoStatus]"AllSettingsDisabled")
+            $userEnabled = ($gpo.GpoStatus -ne [Microsoft.GroupPolicy.GpoStatus]"UserSettingsDisabled" -and $gpo.GpoStatus -ne [Microsoft.GroupPolicy.GpoStatus]"AllSettingsDisabled")
+
             [PSCustomObject]@{
-                Name             = $gpo.DisplayName
-                ID               = $gpo.Id
-                DomainName       = $gpo.DomainName
-                CreationTime     = $gpo.CreationTime
-                ModificationTime = $gpo.ModificationTime
-                Status           = $gpo.GpoStatus
-                Links            = $gpoLinks
-                PasswordPolicies = $passwordPolicy
-                AuditPolicies    = $auditPolicy
-                ComputerEnabled  = $gpo.Computer.Enabled
-                UserEnabled      = $gpo.User.Enabled
+                Name                 = $gpo.DisplayName
+                ID                   = $gpo.Id
+                DomainName           = $gpo.DomainName
+                CreationTime         = $gpo.CreationTime
+                ModificationTime     = $gpo.ModificationTime
+                Status               = $gpo.GpoStatus
+                Links                = $gpoLinks
+                PasswordPolicies     = $passwordPolicy
+                AuditPolicies        = $auditPolicy
+                ComputerEnabled      = $computerEnabled
+                UserEnabled          = $userEnabled
+                WMIFilters           = $wmiFilters
+                Permissions          = $gpoPermissions
+                Scripts              = $scriptPolicies
+                RegistrySettings     = $registrySettings
+                FileOperations       = $fileOperations
+                ServiceSettings      = $serviceSettings
+                AdminTemplates       = $adminTemplates
+                SoftwareInstallation = $softwareInstallation
+                NetworkSettings      = $networkSettings
             }
         }
 
@@ -316,90 +484,18 @@ function Get-ADPolicyInfo {
             FineGrainedPasswordPolicies = $fgppPolicies
         }
 
+        # Add a ToString method for better output
+        Add-Member -InputObject $policyInfo -MemberType ScriptMethod -Name "ToString" -Value {
+            "GPOs: $($this.GroupPolicies.Count), Default Policies: $($this.DefaultLockoutPolicy.Count), FGPP: $($this.FineGrainedPasswordPolicies.Count)"
+        }
+
         return $policyInfo
     }
     catch {
         Write-Log "Error retrieving policy information: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve policy information. Check permissions."
     }
-}
-
-# Helper function to get GPO links
-function Get-GPOLinks {
-    param (
-        [Parameter(Mandatory)]
-        $GPO
-    )
-    
-    try {
-        $links = (Get-GPOReport -Guid $GPO.Id -ReportType XML) -Replace "</?Report>|</?GPO>"
-        [xml]$xmlLinks = "<Root>$links</Root>"
-        
-        $xmlLinks.Root.LinksTo | ForEach-Object {
-            [PSCustomObject]@{
-                Location   = $_.SOMPath
-                Enabled    = $_.Enabled
-                NoOverride = $_.NoOverride
-                Type       = switch -Regex ($_.SOMPath) {
-                    '^[^/]+$' { 'Domain' }
-                    'OU=' { 'OU' }
-                    'CN=Sites' { 'Site' }
-                    default { 'Unknown' }
-                }
-            }
-        }
-    }
-    catch {
-        Write-Log "Error getting GPO links for $($GPO.DisplayName): $($_.Exception.Message)" -Level Warning
-        return $null
-    }
-}
-
-# Helper function to extract password policies from GPO
-function Get-PasswordPolicyFromGPO {
-    param(
-        [Parameter(Mandatory)]
-        [xml]$GPOReport
-    )
-    
-    try {
-        $passwordPolicies = $GPOReport.SelectNodes("//SecurityOptions/SecurityOption[contains(Name, 'Password')]")
-        
-        $passwordPolicies | ForEach-Object {
-            [PSCustomObject]@{
-                Setting = $_.Name
-                State   = $_.State
-                Value   = $_.SettingNumber
-            }
-        }
-    }
-    catch {
-        Write-Log "Error extracting password policies: $($_.Exception.Message)" -Level Warning
-        return $null
-    }
-}
-
-# Helper function to extract audit policies from GPO
-function Get-AuditPolicyFromGPO {
-    param(
-        [Parameter(Mandatory)]
-        [xml]$GPOReport
-    )
-    
-    try {
-        $auditPolicies = $GPOReport.SelectNodes("//AuditSetting")
-        
-        $auditPolicies | ForEach-Object {
-            [PSCustomObject]@{
-                Category     = $_.SubcategoryName
-                AuditSuccess = $_.SettingValue -band 1
-                AuditFailure = $_.SettingValue -band 2
-            }
-        }
-    }
-    catch {
-        Write-Log "Error extracting audit policies: $($_.Exception.Message)" -Level Warning
-        return $null
+    finally {
+        Show-ProgressHelper -Activity "AD Inventory" -Status "Completed policy retrieval" -Completed
     }
 }
 
@@ -427,7 +523,6 @@ function Get-ADSecurityConfiguration {
     }
     catch {
         Write-Log "Error retrieving security configuration: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve security configuration. Check permissions."
     }
 }
 
@@ -894,7 +989,6 @@ function Get-ADComputers {
     }
     catch {
         Write-Log "Error retrieving computers: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve computer accounts. Check permissions."
     }
 }
 
@@ -981,7 +1075,6 @@ function Get-ADGroupsAndMembers {
     }
     catch {
         Write-Log "Error retrieving groups: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve groups. Check permissions."
     }
 }
 
@@ -1088,30 +1181,102 @@ function Get-ADUsers {
 #region Get-DomainReport.ps1
 
 function Get-DomainReport {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Collect')]
     param(
-        [ValidateScript({ Test-Path $_ })]
-        [string]$ExportPath = $script:Config.ExportPath
+        [Parameter(ParameterSetName = 'Collect')]
+        [switch]$Export,
+        
+        [Parameter(ParameterSetName = 'Import', Mandatory = $true)]
+        [string]$ImportPath
     )
 
+    # If importing from file
+    if ($PSCmdlet.ParameterSetName -eq 'Import') {
+        try {
+            Write-Log "Importing domain report from $ImportPath..." -Level Info
+            
+            if (-not (Test-Path $ImportPath)) {
+                throw "Import file not found: $ImportPath"
+            }
+
+            # Read and convert JSON content
+            $importedContent = Get-Content -Path $ImportPath -Raw | ConvertFrom-Json
+
+            # Create a new PSCustomObject with the imported data
+            $domainReport = [PSCustomObject]@{
+                CollectionTime     = [DateTime]::Parse($importedContent.CollectionTime)
+                CollectionStatus   = $importedContent.CollectionStatus
+                CollectionRights   = $importedContent.CollectionRights
+                Errors             = $importedContent.Errors
+                PerformanceMetrics = $importedContent.PerformanceMetrics
+                TotalExecutionTime = $importedContent.TotalExecutionTime
+                BasicInfo          = $importedContent.BasicInfo
+                DomainObjects      = $importedContent.DomainObjects
+                SecuritySettings   = $importedContent.SecuritySettings
+                ReportGeneration   = $importedContent.ReportGeneration
+            }
+
+            # Add methods back to the imported object
+            Add-DomainReportMethods -DomainReport $domainReport
+
+            Write-Log "Successfully imported domain report from $ImportPath" -Level Info
+            return $domainReport
+        }
+        catch {
+            Write-Log "Error importing domain report: $($_.Exception.Message)" -Level Error
+            throw
+        }
+    }
+
     try {
+        # Check admin rights first
+        Write-Log "Checking administrative rights..." -Level Info
+        $currentUser = $env:USERNAME
+        $adminRights = Test-AdminRights -Username $currentUser
+        
+        # Define components based on admin rights
+        $components = @{}
+        
+        # Basic components available to all authenticated users
+        $components['DomainInfo'] = { Get-ADDomainInfo }
+        
+        if ($adminRights.IsADAdmin) {
+            Write-Log "Full administrative rights detected - collecting all data" -Level Info
+            # Full access components
+            $components += @{
+                'ForestInfo'     = { Get-ADForestInfo }
+                'TrustInfo'      = { Get-ADTrustInfo }
+                'Sites'          = { Get-ADSiteInfo }
+                'Users'          = { Get-ADUsers }
+                'Computers'      = { Get-ADComputers }
+                'Groups'         = { Get-ADGroupsAndMembers }
+                'PolicyInfo'     = { Get-ADPolicyInfo }
+                'SecurityConfig' = { Get-ADSecurityConfiguration }
+            }
+        }
+        elseif ($adminRights.IsOUAdmin) {
+            Write-Log "OU Admin rights detected - collecting permitted data" -Level Info
+            # Limited access components
+            $components += @{
+                'Users'     = { Get-ADUsers }
+                'Computers' = { Get-ADComputers }
+                'Groups'    = { Get-ADGroupsAndMembers }
+            }
+        }
+        else {
+            Write-Log "Basic user rights detected - limited data collection" -Level Warning
+            # Basic components only
+            $components += @{
+                'Users'  = { Get-ADUsers -BasicInfoOnly }
+                'Groups' = { Get-ADGroupsAndMembers -BasicInfoOnly }
+            }
+        }
+
         # Initialize tracking variables
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         $results = @{}
         $errors = @{}
         $componentTiming = @{}
-
-        # Define collection components
-        $components = @{
-            'ForestInfo'     = { Get-ADForestInfo }
-            'TrustInfo'      = { Get-ADTrustInfo }
-            'Sites'          = { Get-ADSiteInfo }
-            'DomainInfo'     = { Get-ADDomainInfo }
-            'Users'          = { Get-ADUsers }
-            'Computers'      = { Get-ADComputers }
-            'Groups'         = { Get-ADGroupsAndMembers }
-            'SecurityConfig' = { Get-ADSecurityConfiguration }
-        }
 
         # Sequential collection
         foreach ($component in $components.Keys) {
@@ -1133,6 +1298,7 @@ function Get-DomainReport {
         $domainReport = [PSCustomObject]@{
             CollectionTime     = Get-Date
             CollectionStatus   = if ($errors.Count -eq 0) { "Complete" } else { "Partial" }
+            CollectionRights   = $adminRights
             Errors             = $errors
             PerformanceMetrics = $componentTiming
             TotalExecutionTime = Convert-MillisecondsToReadable -Milliseconds $sw.ElapsedMilliseconds
@@ -1148,27 +1314,26 @@ function Get-DomainReport {
                 Groups    = $results['Groups']
             }
             SecuritySettings   = [PSCustomObject]@{
+                PolicyInfo     = $results['PolicyInfo']
                 SecurityConfig = $results['SecurityConfig']
             }
         }
 
         # Add report generation metadata
         Add-Member -InputObject $domainReport -MemberType NoteProperty -Name "ReportGeneration" -Value @{
-            GeneratedBy       = $env:USERNAME
+            GeneratedBy       = $currentUser
             GeneratedOn       = Get-Date
             ComputerName      = $env:COMPUTERNAME
             PowerShellVersion = $PSVersionTable.PSVersion.ToString()
+            UserRights        = $adminRights
         }
 
         # Add methods to the report object
         Add-DomainReportMethods -DomainReport $domainReport
 
-
-        # Export the report if requested
-        if ($ExportPath) {
-            $exportFile = Join-Path $ExportPath ("DomainReport_{0}.json" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
-            $domainReport | ConvertTo-Json -Depth 10 | Out-File $exportFile
-            Write-Log "Report exported to: $exportFile" -Level Info
+        # Export if switch is set
+        if ($Export) {
+            $domainReport.Export()  # Use the Export method with default path
         }
 
         return $domainReport
@@ -1192,6 +1357,9 @@ function Add-DomainReportMethods {
     
     # Add ToString methods
     Add-ToStringMethods -DomainReport $DomainReport
+
+    # Add Export methods
+    Add-ExportMethod -DomainReport $DomainReport
     
     # Add Search methods
     Add-SearchMethods -DomainReport $DomainReport
@@ -1233,6 +1401,62 @@ function Add-ToStringMethods {
     Add-Member -InputObject $DomainReport.BasicInfo -MemberType ScriptMethod -Name "ToString" -Value $basicInfoToString -Force
     Add-Member -InputObject $DomainReport.DomainObjects -MemberType ScriptMethod -Name "ToString" -Value $domainObjectsToString -Force
     Add-Member -InputObject $DomainReport.SecuritySettings -MemberType ScriptMethod -Name "ToString" -Value $securitySettingsToString -Force
+}
+
+function Add-ExportMethod {
+    param ($DomainReport)
+    
+    $exportReport = {
+        param(
+            [string]$ExportPath
+        )
+            
+        try {
+            Write-Log "Starting export operation..." -Level Info
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Initializing export..."
+
+            # Use provided path or default from config
+            $finalPath = if ($ExportPath) {
+                $ExportPath
+            }
+            else {
+                $script:Config.ExportPath
+            }
+
+            # Ensure export directory exists
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Checking export directory..." -PercentComplete 20
+            if (-not (Test-Path $finalPath)) {
+                New-Item -ItemType Directory -Path $finalPath -Force | Out-Null
+                Write-Log "Created export directory: $finalPath" -Level Info
+            }
+    
+            # Prepare export file path
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Preparing export file..." -PercentComplete 40
+            $exportFile = Join-Path $finalPath ("DomainReport_{0}.json" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+            
+            # Convert to JSON
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Converting report to JSON..." -PercentComplete 60
+            $jsonContent = $this | ConvertTo-Json -Depth 10
+
+            # Write to file
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Writing to file..." -PercentComplete 80
+            $jsonContent | Out-File $exportFile
+
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Export completed" -PercentComplete 100
+            Write-Log "Report successfully exported to: $exportFile" -Level Info
+
+            # Complete the progress bar
+            Show-ProgressHelper -Activity "Domain Report Export" -Completed
+            return $exportFile
+        }
+        catch {
+            Write-Log "Error exporting report: $($_.Exception.Message)" -Level Error
+            Show-ProgressHelper -Activity "Domain Report Export" -Status "Export failed" -Completed
+            return $null
+        }
+    }
+
+    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "Export" -Value $exportReport -Force
 }
 
 function Add-SearchMethods {
@@ -1280,8 +1504,31 @@ function Add-SearchMethods {
         return $results
     }
 
+    $searchGroups = {
+        param([Parameter(Mandatory)][string]$SearchTerm)
+        
+        if (-not $this.DomainObjects.Groups) {
+            Write-Log "No group data available to search" -Level Warning
+            return $null
+        }
+        
+        $results = $this.DomainObjects.Groups | Where-Object {
+            $_.Name -like "*$SearchTerm*" -or
+            $_.Description -like "*$SearchTerm*" -or
+            $_.GroupCategory -like "*$SearchTerm*" -or
+            $_.GroupScope -like "*$SearchTerm*"
+        }
+        
+        if (-not $results) {
+            Write-Log "No groups found matching search term: '$SearchTerm'" -Level Info
+            return $null
+        }
+        return $results
+    }
+
     Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "SearchUsers" -Value $searchUsers -Force
     Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "SearchComputers" -Value $searchComputers -Force
+    Add-Member -InputObject $DomainReport -MemberType ScriptMethod -Name "SearchGroups" -Value $searchGroups -Force
 }
 
 function Add-NetworkMethods {
@@ -1560,6 +1807,70 @@ function Get-DisplaySuspiciousSPNsMethod {
 #endregion
 
 
+#region Import-ADModule.ps1
+
+function Import-ADModule {
+    [CmdletBinding()]
+    param()
+    
+    try {
+        if (-not (Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue)) {
+            Import-Module ActiveDirectory -ErrorAction Stop
+            Write-Log "ActiveDirectory module imported successfully" -Level Info
+        }
+    }
+    catch [System.IO.FileNotFoundException] {
+        Write-Log "ActiveDirectory module not found. Please install RSAT tools." -Level Error
+        return $false
+    }
+    catch {
+        Write-Log "Failed to import ActiveDirectory module: $($_.Exception.Message)" -Level Error
+        return $false
+    }
+    return $true
+}
+
+#endregion
+
+
+#region Initialize-Environment.ps1
+
+function Initialize-Environment {
+    [CmdletBinding()]
+    param()
+    
+    try {
+        # Create necessary directories
+        @($script:Config.ExportPath, $script:Config.LogPath) | ForEach-Object {
+            if (-not (Test-Path $_)) {
+                New-Item -ItemType Directory -Path $_ -Force
+                Write-Log "Created directory: $_" -Level Info
+            }
+        }
+        
+        # Test write permissions
+        $testFile = Join-Path $script:Config.ExportPath "test.txt"
+        try {
+            [void](New-Item -ItemType File -Path $testFile -Force)
+            Remove-Item $testFile -Force
+            Write-Log "Write permissions verified" -Level Info
+        }
+        catch {
+            throw "No write permission in export directory"
+        }
+        
+        return $true
+    }
+    catch {
+        Write-Log "Failed to initialize environment: $($_.Exception.Message)" -Level Error
+        return $false
+    }
+}
+#endregion
+
+#endregion
+
+
 #region Test-AdminRights.ps1
 
 function Test-AdminRights {
@@ -1607,72 +1918,6 @@ function Test-AdminRights {
     # Return results
     return $adminStatus
 }
-
-#endregion
-
-
-#region Import-ADModule.ps1
-
-function Import-ADModule {
-    [CmdletBinding()]
-    param()
-    
-    try {
-        if (-not (Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue)) {
-            Import-Module ActiveDirectory -ErrorAction Stop
-            Write-Log "ActiveDirectory module imported successfully" -Level Info
-        }
-    }
-    catch [System.IO.FileNotFoundException] {
-        Write-Log "ActiveDirectory module not found. Please install RSAT tools." -Level Error
-        Show-ErrorBox "ActiveDirectory module not found. Please install RSAT tools."
-        return $false
-    }
-    catch {
-        Write-Log "Failed to import ActiveDirectory module: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Failed to import ActiveDirectory module: $($_.Exception.Message)"
-        return $false
-    }
-    return $true
-}
-
-#endregion
-
-
-#region Initialize-Environment.ps1
-
-function Initialize-Environment {
-    [CmdletBinding()]
-    param()
-    
-    try {
-        # Create necessary directories
-        @($script:Config.ExportPath, $script:Config.LogPath) | ForEach-Object {
-            if (-not (Test-Path $_)) {
-                New-Item -ItemType Directory -Path $_ -Force
-                Write-Log "Created directory: $_" -Level Info
-            }
-        }
-        
-        # Test write permissions
-        $testFile = Join-Path $script:Config.ExportPath "test.txt"
-        try {
-            [void](New-Item -ItemType File -Path $testFile -Force)
-            Remove-Item $testFile -Force
-            Write-Log "Write permissions verified" -Level Info
-        }
-        catch {
-            throw "No write permission in export directory"
-        }
-        
-        return $true
-    }
-    catch {
-        Write-Log "Failed to initialize environment: $($_.Exception.Message)" -Level Error
-        return $false
-    }
-}
-#endregion
 
 #endregion
 
@@ -1860,25 +2105,6 @@ function Invoke-WithRetry {
             $attempt++
         }
     } while ($attempt -le $RetryCount)
-}
-
-#endregion
-
-
-#region Show-ErrorBox.ps1
-
-function Show-ErrorBox {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Message
-    )
-
-    [System.Windows.Forms.MessageBox]::Show($Message, "Permission or Error Issue", 
-        [System.Windows.Forms.MessageBoxButtons]::OK, 
-        [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
-    
-    Write-Log $Message -Level Error
 }
 
 #endregion

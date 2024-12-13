@@ -16,6 +16,11 @@ catch {
 
 # Import configuration
 . "$PSScriptRoot\Config\config.ps1"
+. "$PSScriptRoot\Private\Helpers\Initialize-Environment.ps1"
+. "$PSScriptRoot\Private\Helpers\Initialize-ADData.ps1"
+
+Initialize-Environment
+Initialize-ADData
 
 # fastDFIR.psm1
 $Public = @(Get-ChildItem -Path $PSScriptRoot\Public -Recurse -Filter "*.ps1")

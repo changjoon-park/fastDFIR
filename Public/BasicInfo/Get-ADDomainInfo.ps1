@@ -1,43 +1,49 @@
 function Get-ADDomainInfo {
     try {
-        Write-Log "Retrieving AD domain information..." -Level Info
+        Write-Log "Retrieving AD domain information from cached data..." -Level Info
     
-        $domain = Invoke-WithRetry -ScriptBlock {
-            Get-ADDomain -ErrorAction Stop
+        if (-not $script:Domain) {
+            Write-Log "Domain data not available in cache." -Level Warning
+            return $null
         }
 
-        # Try to get domain controllers
-        $domainControllers = try {
-            Get-ADDomainController -Filter * -ErrorAction Stop | 
-            ForEach-Object {
+        # If domain controllers are not available, handle it gracefully
+        $domainControllers = $null
+        if ($script:AllDCs) {
+            $domainControllers = @()
+            foreach ($dcItem in $script:AllDCs) {
                 $dc = [PSCustomObject]@{
-                    HostName               = $_.HostName
-                    IPv4Address            = $_.IPv4Address
-                    Site                   = $_.Site
-                    IsGlobalCatalog        = $_.IsGlobalCatalog
-                    OperatingSystem        = $_.OperatingSystem
-                    OperatingSystemVersion = $_.OperatingSystemVersion
-                    Enabled                = $_.Enabled
+                    HostName               = $dcItem.HostName
+                    IPv4Address            = $dcItem.IPv4Address
+                    Site                   = $dcItem.Site
+                    IsGlobalCatalog        = $dcItem.IsGlobalCatalog
+                    OperatingSystem        = $dcItem.OperatingSystem
+                    OperatingSystemVersion = $dcItem.OperatingSystemVersion
+                    Enabled                = $dcItem.Enabled
                 }
 
                 Add-Member -InputObject $dc -MemberType ScriptMethod -Name "ToString" -Value {
                     "HostName=$($this.HostName); IPv4=$($this.IPv4Address); Site=$($this.Site)"
-                } -String
+                } -Force
+
+                $domainControllers += $dc
             }
         }
-        catch {
-            Write-Log "Unable to retrieve domain controllers: $($_.Exception.Message)" -Level Warning
-            "Access Denied or Connection Failed"
+        else {
+            Write-Log "No cached domain controller data found." -Level Warning
+            $domainControllers = "Access Denied or Connection Failed"
         }
 
+        $ouInfo = Get-ADOUInfo  # Now uses cached $script:AllOUs
+
         $domainInfo = [PSCustomObject]@{
-            DomainName           = $domain.Name
-            DomainMode           = $domain.DomainMode
-            PDCEmulator          = $domain.PDCEmulator
-            RIDMaster            = $domain.RIDMaster
-            InfrastructureMaster = $domain.InfrastructureMaster
+            DomainName           = $script:Domain.Name
+            DomainMode           = $script:Domain.DomainMode
+            PDCEmulator          = $script:Domain.PDCEmulator
+            RIDMaster            = $script:Domain.RIDMaster
+            InfrastructureMaster = $script:Domain.InfrastructureMaster
             DomainControllers    = $domainControllers
-            OrganizationalUnits  = Get-ADOUInfo
+            OrganizationalUnits  = $ouInfo
         }
 
         # Add ToString method to domainInfo
@@ -55,11 +61,15 @@ function Get-ADDomainInfo {
 
 function Get-ADOUInfo {
     try {
-        Write-Log "Retrieving OU information for domain:..." -Level Info
+        Write-Log "Retrieving OU information from cached data..." -Level Info
         
-        $ous = Get-ADOrganizationalUnit -Filter * -Properties * -ErrorAction Stop
-        
-        $ouInfo = foreach ($ou in $ous) {
+        if (-not $script:AllOUs) {
+            Write-Log "No OU data available in cache." -Level Warning
+            return $null
+        }
+
+        $ouInfo = @()
+        foreach ($ou in $script:AllOUs) {
             $ouObject = [PSCustomObject]@{
                 Name              = $ou.Name
                 DistinguishedName = $ou.DistinguishedName
@@ -74,13 +84,13 @@ function Get-ADOUInfo {
                 "Name=$($this.Name); Children=$($this.ChildOUs.Split(',').Count)"
             } -Force
 
-            $ouObject
+            $ouInfo += $ouObject
         }
         
         return $ouInfo
     }
     catch {
-        Write-Log "Error retrieving OU information for: $($_.Exception.Message)" -Level Error
+        Write-Log "Error retrieving OU information: $($_.Exception.Message)" -Level Error
         return $null
     }
 }

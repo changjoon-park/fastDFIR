@@ -1,36 +1,20 @@
 function Get-ADComputers {
     [CmdletBinding()]
     param(
-        [string]$ObjectType = "Computers",
-        [string]$ExportPath = $script:Config.ExportPath
+        [string]$ObjectType = "Computers"
     )
     
     try {
-        Write-Log "Retrieving computer accounts..." -Level Info
+        Write-Log "Retrieving computer accounts from cached data..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing computer retrieval..."
 
-        $properties = @(
-            'Name',
-            'IPv4Address',
-            'DistinguishedName',
-            'OperatingSystem',
-            'OperatingSystemVersion',
-            'OperatingSystemServicePack',
-            'Enabled',
-            'LastLogonDate',
-            'Created',
-            'Modified',
-            'DNSHostName',
-            'SID',
-            'ServicePrincipalNames',
-            'MemberOf'  # Added MemberOf property
-        )
-
-        $computers = Invoke-WithRetry -ScriptBlock {
-            Get-ADComputer -Filter * -Properties $properties -ErrorAction Stop
+        # Check if cached data is available
+        if (-not $script:AllComputers) {
+            Write-Log "No cached computer data found." -Level Warning
+            return $null
         }
 
-        $computerObjects = Get-ADObjects -ObjectType $ObjectType -Objects $computers -ProcessingScript {
+        $computerObjects = Get-ADObjects -ObjectType $ObjectType -Objects $script:AllComputers -ProcessingScript {
             param($computer)
             
             try {
@@ -46,13 +30,12 @@ function Get-ADComputers {
                     Modified               = $computer.Modified
                     DistinguishedName      = $computer.DistinguishedName
                     ServicePrincipalNames  = $computer.ServicePrincipalNames
-                    MemberOf               = $computer.MemberOf  # Added MemberOf property
+                    MemberOf               = $computer.MemberOf
                     AccessStatus           = "Success"
                     NetworkStatus          = "Unknown"
                     IsAlive                = $false
                 }
 
-                # Updated ToString method to include group membership count
                 Add-Member -InputObject $computerObject -MemberType ScriptMethod -Name "ToString" -Value {
                     "Name=$($this.Name); NetworkStatus=$($this.NetworkStatus); IsAlive=$($this.IsAlive); Groups=$($this.MemberOf.Count)"
                 } -Force
@@ -74,7 +57,7 @@ function Get-ADComputers {
                     Modified               = $null
                     DistinguishedName      = $computer.DistinguishedName
                     ServicePrincipalNames  = $null
-                    MemberOf               = @()  # Empty array for error cases
+                    MemberOf               = @()
                     AccessStatus           = "Access Error: $($_.Exception.Message)"
                     NetworkStatus          = "Error"
                     IsAlive                = $false
@@ -92,6 +75,5 @@ function Get-ADComputers {
     }
     catch {
         Write-Log "Error retrieving computers: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve computer accounts. Check permissions."
     }
 }

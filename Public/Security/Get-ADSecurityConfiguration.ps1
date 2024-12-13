@@ -17,7 +17,6 @@ function Get-ADSecurityConfiguration {
     }
     catch {
         Write-Log "Error retrieving security configuration: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve security configuration. Check permissions."
     }
 }
 
@@ -25,25 +24,33 @@ function Get-CriticalObjectACLs {
     try {
         Write-Log "Collecting ACLs for critical AD objects..." -Level Info
         
-        # Get all OUs
-        $ous = Get-ADOrganizationalUnit -Filter *
-        
-        $acls = foreach ($ou in $ous) {
+        if (-not $script:AllOUs -or $script:AllOUs.Count -eq 0) {
+            Write-Log "No OU data available in cache." -Level Warning
+            return $null
+        }
+
+        $acls = @()
+        foreach ($ou in $script:AllOUs) {
             try {
-                $acl = Get-Acl -Path "AD:$ou"
+                # Getting ACL from AD is still required
+                $acl = Get-Acl -Path ("AD:" + $ou.DistinguishedName)
                 
+                # Convert ACL.Access to a collection of custom objects
+                $accessRules = @()
+                foreach ($rule in $acl.Access) {
+                    $accessRules += [PSCustomObject]@{
+                        Principal  = $rule.IdentityReference.Value
+                        AccessType = $rule.AccessControlType.ToString()
+                        Rights     = $rule.ActiveDirectoryRights.ToString()
+                        Inherited  = $rule.IsInherited
+                    }
+                }
+
                 $aclObject = [PSCustomObject]@{
                     OU          = $ou.Name
-                    Path        = $ou.path
+                    Path        = $ou.DistinguishedName
                     Owner       = $acl.Owner
-                    AccessRules = $acl.Access | ForEach-Object {
-                        [PSCustomObject]@{
-                            Principal  = $_.IdentityReference.Value
-                            AccessType = $_.AccessControlType.ToString()
-                            Rights     = $_.ActiveDirectoryRights.ToString()
-                            Inherited  = $_.IsInherited
-                        }
-                    }
+                    AccessRules = $accessRules
                 }
 
                 # Add ToString method to each ACL object
@@ -51,10 +58,10 @@ function Get-CriticalObjectACLs {
                     "OU=$($this.OU); Owner=$($this.Owner); Rules=$($this.AccessRules.Count)"
                 } -Force
 
-                $aclObject
+                $acls += $aclObject
             }
             catch {
-                Write-Log "Error getting ACL for $path : $($_.Exception.Message)" -Level Warning
+                Write-Log "Error getting ACL for $($ou.DistinguishedName) : $($_.Exception.Message)" -Level Warning
             }
         }
         
@@ -70,26 +77,42 @@ function Get-CriticalShareACLs {
     try {
         Write-Log "Collecting ACLs for SYSVOL and NETLOGON shares..." -Level Info
         
-        $dc = Get-ADDomainController
+        # Use cached DC data
+        if (-not $script:AllDCs -or $script:AllDCs.Count -eq 0) {
+            Write-Log "No domain controller data available in cache. Cannot retrieve share ACLs." -Level Error
+            return $null
+        }
+
+        # Pick the first DC from the cached list (or add logic to choose a specific one)
+        $dc = $script:AllDCs[0]
+        if (-not $dc.HostName) {
+            Write-Log "No DC HostName available to form share paths." -Level Error
+            return $null
+        }
+
         $shares = @("SYSVOL", "NETLOGON")
-        
-        $shareAcls = foreach ($share in $shares) {
+        $shareAcls = @()
+
+        foreach ($share in $shares) {
             try {
                 $path = "\\$($dc.HostName)\$share"
                 $acl = Get-Acl -Path $path
-                
+
+                $accessRules = @()
+                foreach ($rule in $acl.AccessRules) {
+                    $accessRules += [PSCustomObject]@{
+                        Principal  = $rule.IdentityReference.Value
+                        AccessType = $rule.AccessControlType.ToString()
+                        Rights     = $rule.FileSystemRights.ToString()
+                        Inherited  = $rule.IsInherited
+                    }
+                }
+
                 $shareAclObject = [PSCustomObject]@{
                     ShareName   = $share
                     Path        = $path
                     Owner       = $acl.Owner
-                    AccessRules = $acl.AccessRules | ForEach-Object {
-                        [PSCustomObject]@{
-                            Principal  = $_.IdentityReference.Value
-                            AccessType = $_.AccessControlType.ToString()
-                            Rights     = $_.FileSystemRights.ToString()
-                            Inherited  = $_.IsInherited
-                        }
-                    }
+                    AccessRules = $accessRules
                 }
 
                 # Add ToString method to each share ACL object
@@ -97,7 +120,7 @@ function Get-CriticalShareACLs {
                     "Share=$($this.ShareName); Owner=$($this.Owner); Rules=$($this.AccessRules.Count)"
                 } -Force
 
-                $shareAclObject
+                $shareAcls += $shareAclObject
             }
             catch {
                 Write-Log "Error getting ACL for $share : $($_.Exception.Message)" -Level Warning
@@ -114,35 +137,65 @@ function Get-CriticalShareACLs {
 
 function Get-SPNConfiguration {
     try {
-        Write-Log "Collecting SPN configuration..." -Level Info
+        Write-Log "Collecting SPN configuration from cached users..." -Level Info
         
-        # Get all user accounts with SPNs
-        $spnUsers = Get-ADUser -Filter * -Properties ServicePrincipalNames |
-        Where-Object { $_.ServicePrincipalNames.Count -gt 0 }
-        
-        $spnConfig = foreach ($user in $spnUsers) {
+        if (-not $script:AllUsers -or $script:AllUsers.Count -eq 0) {
+            Write-Log "No user data available in cache." -Level Warning
+            return $null
+        }
+
+        # Filter users that have SPNs
+        $spnUsers = @()
+        foreach ($usr in $script:AllUsers) {
+            if ($usr.ServicePrincipalNames -and $usr.ServicePrincipalNames.Count -gt 0) {
+                $spnUsers += $usr
+            }
+        }
+
+        if ($spnUsers.Count -eq 0) {
+            Write-Log "No users with SPNs found." -Level Info
+            return @()
+        }
+
+        $spnConfig = @()
+        foreach ($user in $spnUsers) {
             $spnObject = [PSCustomObject]@{
                 UserName    = $user.SamAccountName
                 Enabled     = $user.Enabled
                 SPNs        = $user.ServicePrincipalNames
-                IsDuplicate = $false  # Will be checked later
+                IsDuplicate = $false
             }
 
-            # Add ToString method to each SPN config object
+            # Add ToString method
             Add-Member -InputObject $spnObject -MemberType ScriptMethod -Name "ToString" -Value {
                 "User=$($this.UserName); Enabled=$($this.Enabled); SPNCount=$($this.SPNs.Count); Duplicate=$($this.IsDuplicate)"
             } -Force
 
-            $spnObject
+            $spnConfig += $spnObject
         }
-        
+
         # Check for duplicate SPNs
-        $allSpns = $spnUsers | ForEach-Object { $_.ServicePrincipalNames } | Where-Object { $_ }
-        $duplicateSpns = $allSpns | Group-Object | Where-Object { $_.Count -gt 1 }
-        
-        foreach ($dupSpn in $duplicateSpns) {
-            $spnConfig | Where-Object { $_.SPNs -contains $dupSpn.Name } | 
-            ForEach-Object { $_.IsDuplicate = $true }
+        # We'll use a hashtable to track counts of SPNs
+        $spnTable = @{}
+        foreach ($spnObj in $spnConfig) {
+            foreach ($spn in $spnObj.SPNs) {
+                if ($spnTable.ContainsKey($spn)) {
+                    $spnTable[$spn]++
+                }
+                else {
+                    $spnTable[$spn] = 1
+                }
+            }
+        }
+
+        # Mark duplicates
+        foreach ($spnObj in $spnConfig) {
+            foreach ($spn in $spnObj.SPNs) {
+                if ($spnTable[$spn] -gt 1) {
+                    $spnObj.IsDuplicate = $true
+                    break
+                }
+            }
         }
         
         return $spnConfig

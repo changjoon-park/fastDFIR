@@ -76,9 +76,9 @@
         'Get-ADTrustInfo',
         'Get-ADComputers',
         'Get-ADGroupsAndMembers', 
+        'Get-ADUsers',
         'Get-ADPolicyInfo',
         'Get-ADSecurityConfiguration',
-        'Get-ADUsers',
         'Get-DomainReport'
     )
 

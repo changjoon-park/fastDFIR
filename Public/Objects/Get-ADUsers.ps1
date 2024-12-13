@@ -2,37 +2,36 @@ function Get-ADUsers {
     [CmdletBinding()]
     param(
         [string]$ObjectType = "Users",
-        [string]$ExportPath = $script:Config.ExportPath,
         [switch]$IncludeDisabled
     )
     
     try {
-        Write-Log "Retrieving user accounts..." -Level Info
+        Write-Log "Retrieving user accounts from cached data..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing user retrieval..."
         
-        $filter = if ($IncludeDisabled) { "*" } else { "Enabled -eq 'True'" }
-        
-        $properties = @(
-            'SamAccountName',
-            'DisplayName',
-            'EmailAddress',
-            'Enabled',
-            'LastLogonDate',
-            'PasswordLastSet',
-            'PasswordNeverExpires',
-            'PasswordExpired',
-            'DistinguishedName',
-            'MemberOf'
-        )
-        
-        $users = Invoke-WithRetry -ScriptBlock {
-            Get-ADUser -Filter $filter -Properties $properties -ErrorAction Stop
+        # We previously filtered users by Enabled or Disabled state when querying AD directly.
+        # Now we have all users cached. Let's filter in memory if needed.
+        $filteredUsers = $script:AllUsers
+        if (-not $IncludeDisabled) {
+            $filteredUsers = $filteredUsers | Where-Object { $_.Enabled -eq $true }
         }
-        
-        $userObjects = Get-ADObjects -ObjectType $ObjectType -Objects $users -ProcessingScript {
+
+        if (-not $filteredUsers) {
+            Write-Log "No user data available based on the specified criteria." -Level Warning
+            return $null
+        }
+
+        $userObjects = Get-ADObjects -ObjectType $ObjectType -Objects $filteredUsers -ProcessingScript {
             param($user)
 
             try {
+                $accountStatus = if ($user.Enabled) {
+                    if ($user.PasswordExpired) { "Expired" } else { "Active" }
+                }
+                else {
+                    "Disabled"
+                }
+
                 $userObject = [PSCustomObject]@{
                     SamAccountName       = $user.SamAccountName
                     DisplayName          = $user.DisplayName
@@ -44,10 +43,7 @@ function Get-ADUsers {
                     PasswordExpired      = $user.PasswordExpired
                     DistinguishedName    = $user.DistinguishedName
                     MemberOf             = $user.MemberOf
-                    AccountStatus        = if ($user.Enabled) { 
-                        if ($user.PasswordExpired) { "Expired" } else { "Active" }
-                    }
-                    else { "Disabled" }
+                    AccountStatus        = $accountStatus
                     AccessStatus         = "Success"
                 }
 

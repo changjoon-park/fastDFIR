@@ -1,9 +1,13 @@
 function Get-ADTrustInfo {
     try {
-        Write-Log "Retrieving AD trust information..." -Level Info
+        Write-Log "Retrieving AD trust information from cached data..." -Level Info
         
-        $trustInfo = Get-ADTrust -Filter * -ErrorAction SilentlyContinue | 
-        ForEach-Object {
+        if (-not $script:AllTrusts) {
+            Write-Log "No trust data available in cache." -Level Warning
+            return $null
+        }
+
+        $trustInfo = $script:AllTrusts | ForEach-Object {
             $info = [PSCustomObject]@{
                 Name               = $_.Name
                 Source             = $_.Source

@@ -1,31 +1,20 @@
 function Get-ADGroupsAndMembers {
     [CmdletBinding()]
     param(
-        [string]$ObjectType = "Groups",
-        [string]$ExportPath = $script:Config.ExportPath
+        [string]$ObjectType = "Groups"
     )
     
     try {
-        Write-Log "Retrieving groups and members..." -Level Info
+        Write-Log "Retrieving groups and members from cached data..." -Level Info
         Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing group retrieval..."
         
-        $properties = @(
-            'Name',
-            'Description',
-            'GroupCategory',
-            'GroupScope',
-            'Members',
-            'MemberOf',
-            'DistinguishedName',
-            'Created',
-            'Modified'
-        )
-
-        $groups = Invoke-WithRetry -ScriptBlock {
-            Get-ADGroup -Filter * -Properties $properties -ErrorAction Stop
+        # Check if cached data is available
+        if (-not $script:AllGroups) {
+            Write-Log "No cached group data found." -Level Warning
+            return $null
         }
-        
-        $groupObjects = Get-ADObjects -ObjectType $ObjectType -Objects $groups -ProcessingScript {
+
+        $groupObjects = Get-ADObjects -ObjectType $ObjectType -Objects $script:AllGroups -ProcessingScript {
             param($group)
             
             try {
@@ -34,7 +23,7 @@ function Get-ADGroupsAndMembers {
                     Description            = $group.Description
                     GroupCategory          = $group.GroupCategory
                     GroupScope             = $group.GroupScope
-                    TotalNestedMemberCount = $group.Members.Count
+                    TotalNestedMemberCount = if ($group.Members) { $group.Members.Count } else { 0 }
                     Members                = $group.Members
                     Created                = $group.Created
                     Modified               = $group.Modified
@@ -76,6 +65,5 @@ function Get-ADGroupsAndMembers {
     }
     catch {
         Write-Log "Error retrieving groups: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve groups. Check permissions."
     }
 }

@@ -3,33 +3,43 @@ function Find-SuspiciousGroupMemberships {
     param(
         [Parameter(Mandatory)]
         [object[]]$Groups,
+
+        [Parameter(Mandatory)]
         [object[]]$Users,
+
+        # ApprovedMembers hash for certain groups; if not present, no member is implicitly approved.
         [hashtable]$ApprovedMembers = @{
             "Domain Admins"     = @("Administrator")
             "Enterprise Admins" = @("Administrator")
             "Schema Admins"     = @("Administrator")
         },
+
         [int]$NewAccountThresholdDays = 30
     )
 
+    # Pre-build a lookup for users by their DistinguishedName for faster lookups
+    $userByDN = @{}
+    foreach ($u in $Users) {
+        if ($u.DistinguishedName) {
+            $userByDN[$u.DistinguishedName] = $u
+        }
+    }
+
     $suspiciousFindings = @()
     
-    # Get all privileged groups and their known patterns
+    # Define privileged groups and their constraints
     $privilegedGroups = @{
         "Domain Admins"     = @{
-            MaxMembers     = 5
-            RequiredNaming = "admin"
-            RiskLevel      = "Critical"
+            MaxMembers = 5
+            RiskLevel  = "Critical"
         }
         "Enterprise Admins" = @{
-            MaxMembers     = 3
-            RequiredNaming = "admin"
-            RiskLevel      = "Critical"
+            MaxMembers = 3
+            RiskLevel  = "Critical"
         }
         "Schema Admins"     = @{
-            MaxMembers     = 2
-            RequiredNaming = "admin"
-            RiskLevel      = "Critical"
+            MaxMembers = 2
+            RiskLevel  = "Critical"
         }
         "Backup Operators"  = @{
             MaxMembers = 5
@@ -40,9 +50,12 @@ function Find-SuspiciousGroupMemberships {
     foreach ($group in $Groups) {
         if ($privilegedGroups.ContainsKey($group.Name)) {
             $groupConfig = $privilegedGroups[$group.Name]
+
+            # Get the approved list for this group if defined, else empty
             $approvedList = $ApprovedMembers[$group.Name]
-            
-            # Check total member count
+            if (-not $approvedList) { $approvedList = @() }
+
+            # Check if the group exceeds the maximum expected membership
             if ($group.Members.Count -gt $groupConfig.MaxMembers) {
                 $suspiciousFindings += [PSCustomObject]@{
                     GroupName    = $group.Name
@@ -53,10 +66,12 @@ function Find-SuspiciousGroupMemberships {
                 }
             }
 
+            # Check each member in the group
             foreach ($memberDN in $group.Members) {
-                $member = $Users | Where-Object { $_.DistinguishedName -eq $memberDN }
+                # Attempt to retrieve the member from the lookup
+                $member = $userByDN[$memberDN]
                 if ($member) {
-                    # Check if member is approved
+                    # If the member is not on the approved list, consider it suspicious
                     if (-not ($approvedList -contains $member.SamAccountName)) {
                         $finding = [PSCustomObject]@{
                             GroupName    = $group.Name
@@ -67,18 +82,23 @@ function Find-SuspiciousGroupMemberships {
                             TimeDetected = Get-Date
                         }
                         
-                        # Additional checks for suspicious patterns
+                        # If the account was recently created, escalate severity
                         if ($member.Created -gt (Get-Date).AddDays(-$NewAccountThresholdDays)) {
                             $finding.Finding = "Recently Created Account in Privileged Group"
                             $finding.RiskLevel = "Critical"
                         }
-                        
+
+                        # If the account is disabled, flag this
                         if ($member.Enabled -eq $false) {
                             $finding.Finding = "Disabled Account in Privileged Group"
                         }
                         
                         $suspiciousFindings += $finding
                     }
+                }
+                else {
+                    # Could not find the user in the provided list - this might also be suspicious,
+                    # or could indicate the user data is incomplete. Consider logging a warning.
                 }
             }
         }

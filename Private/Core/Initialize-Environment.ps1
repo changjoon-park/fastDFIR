@@ -29,4 +29,3 @@ function Initialize-Environment {
         return $false
     }
 }
-#endregion
