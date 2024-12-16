@@ -72,6 +72,5 @@ function Get-ADUsers {
     }
     catch {
         Write-Log "Error retrieving users: $($_.Exception.Message)" -Level Error
-        Show-ErrorBox "Unable to retrieve users. Check permissions."
     }
 }

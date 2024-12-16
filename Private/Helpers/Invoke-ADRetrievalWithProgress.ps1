@@ -1,5 +1,3 @@
-#region Invoke-ADRetrievalWithProgress.ps1
-
 function Invoke-ADRetrievalWithProgress {
     [CmdletBinding()]
     param(
@@ -40,17 +38,33 @@ function Invoke-ADRetrievalWithProgress {
             default { throw "Unsupported ObjectType: $ObjectType" }
         }
 
+        # Determine if the cmdlet supports the -Filter parameter
+        $objectTypesWithFilter = @("Users", "Computers", "Groups", "Sites", "Trusts", "OrganizationalUnits", "DomainControllers")
+        $supportsFilter = $objectTypesWithFilter -contains $ObjectType
+
         # Count total objects for progress calculation
         Write-Log "Counting total $ObjectType for progress calculation..." -Level Info
-        $countParams = @{ Filter = $Filter }
-        if ($Credential) { $countParams.Credential = $Credential }
+        $countParams = @{}
+        if ($supportsFilter) {
+            $countParams['Filter'] = $Filter
+        }
+        if ($Credential) {
+            $countParams['Credential'] = $Credential
+        }
 
         # Handle single-object cmdlets like Get-ADForest, Get-GPO, Get-ADDomain
         if ($ObjectType -in @("ForestInfo", "Policies", "DomainInfo")) {
             $total = 1
         }
         else {
-            $total = (& $cmdletName @countParams | Measure-Object).Count
+            # Attempt to retrieve objects to count them
+            try {
+                $total = (& $cmdletName @countParams | Measure-Object).Count
+            }
+            catch {
+                Write-Log "Error counting objects for ${ObjectType} $($_.Exception.Message)" -Level Error
+                return $null
+            }
         }
 
         if ($total -eq 0) {
@@ -61,35 +75,50 @@ function Invoke-ADRetrievalWithProgress {
         Write-Log "Retrieving and processing $total $ObjectType..." -Level Info
 
         # Build retrieval parameters
-        $getParams = @{ Filter = $Filter }
-        if ($Properties) { $getParams.Properties = $Properties }
-        if ($Credential) { $getParams.Credential = $Credential }
+        $getParams = @{}
+        if ($supportsFilter) {
+            $getParams['Filter'] = $Filter
+        }
+        if ($Properties) {
+            $getParams['Properties'] = $Properties
+        }
+        if ($Credential) {
+            $getParams['Credential'] = $Credential
+        }
 
         $count = 0
-        $results = (& $cmdletName @getParams) |
-        ForEach-Object -Begin {
-            Show-Progress -Activity $ActivityName -Status "Starting..." -PercentComplete 0
-        } -Process {
+        $results = @()
+        $cmd = { & $cmdletName @using:getParams }
+
+        $objects = try {
+            & $cmd
+        }
+        catch {
+            Write-Log "Error retrieving ${ObjectType} $($_.Exception.Message)" -Level Error
+            return $null
+        }
+
+        foreach ($item in $objects) {
             $count++
             try {
                 # Apply the transformation logic provided by the caller
-                $obj = & $ProcessingScript $_
+                $obj = & $ProcessingScript $item
 
-                # Update progress
+                # Update progress using Show-ProgressHelper
                 $percent = [int]( ($count / $total) * 100 )
-                Show-Progress -Activity $ActivityName -Status "Processing $ObjectType $count of $total" -PercentComplete $percent
+                Show-ProgressHelper -Activity $ActivityName -Status "Processing $ObjectType $count of $total" -PercentComplete $percent
 
-                # Output the transformed object
-                $obj
+                # Collect the transformed object
+                $results += $obj
             }
             catch {
-                Write-Log "Error processing $ObjectType $($ObjectType -eq 'Users' ? $_.SamAccountName : $_.Name): $($_.Exception.Message)" -Level Warning
+                Write-Log "Error processing ${ObjectType} $($_.Exception.Message)" -Level Warning
 
                 # Create a fallback object in case of processing error
                 switch ($ObjectType) {
                     "Users" {
                         $errorObject = [PSCustomObject]@{
-                            SamAccountName       = $_.SamAccountName
+                            SamAccountName       = $item.SamAccountName
                             DisplayName          = $null
                             EmailAddress         = $null
                             Enabled              = $null
@@ -97,7 +126,7 @@ function Invoke-ADRetrievalWithProgress {
                             PasswordLastSet      = $null
                             PasswordNeverExpires = $null
                             PasswordExpired      = $null
-                            DistinguishedName    = $_.DistinguishedName
+                            DistinguishedName    = $item.DistinguishedName
                             MemberOf             = @()
                             AccountStatus        = "Error"
                             AccessStatus         = "Access Error: $($_.Exception.Message)"
@@ -105,11 +134,11 @@ function Invoke-ADRetrievalWithProgress {
                         Add-Member -InputObject $errorObject -MemberType ScriptMethod -Name "ToString" -Value {
                             "SamAccountName=$($this.SamAccountName); Status=Error; Groups=0"
                         } -Force
-                        $errorObject
+                        $results += $errorObject
                     }
                     "Computers" {
                         $errorObject = [PSCustomObject]@{
-                            Name                   = $_.Name
+                            Name                   = $item.Name
                             IPv4Address            = $null
                             DNSHostName            = $null
                             OperatingSystem        = $null
@@ -118,7 +147,7 @@ function Invoke-ADRetrievalWithProgress {
                             LastLogonDate          = $null
                             Created                = $null
                             Modified               = $null
-                            DistinguishedName      = $_.DistinguishedName
+                            DistinguishedName      = $item.DistinguishedName
                             ServicePrincipalNames  = $null
                             MemberOf               = @()
                             AccessStatus           = "Access Error: $($_.Exception.Message)"
@@ -128,63 +157,64 @@ function Invoke-ADRetrievalWithProgress {
                         Add-Member -InputObject $errorObject -MemberType ScriptMethod -Name "ToString" -Value {
                             "Name=$($this.Name); NetworkStatus=Error; IsAlive=$($this.IsAlive); Groups=0"
                         } -Force
-                        $errorObject
+                        $results += $errorObject
                     }
                     "Groups" {
                         $errorObject = [PSCustomObject]@{
-                            Name                   = $_.Name
-                            Description            = $_.Description
-                            GroupCategory          = $_.GroupCategory
-                            GroupScope             = $_.GroupScope
+                            Name                   = $item.Name
+                            Description            = $item.Description
+                            GroupCategory          = $item.GroupCategory
+                            GroupScope             = $item.GroupScope
                             TotalNestedMemberCount = 0
                             Members                = @()
-                            Created                = $_.Created
-                            Modified               = $_.Modified
-                            DistinguishedName      = $_.DistinguishedName
+                            Created                = $item.Created
+                            Modified               = $item.Modified
+                            DistinguishedName      = $item.DistinguishedName
                             AccessStatus           = "Access Error: $($_.Exception.Message)"
                         }
                         Add-Member -InputObject $errorObject -MemberType ScriptMethod -Name "ToString" -Value {
                             "Name=$($this.Name); Status=Error"
                         } -Force
-                        $errorObject
+                        $results += $errorObject
                     }
                     "ForestInfo" {
                         Write-Log "Error retrieving Forest Info: $($_.Exception.Message)" -Level Warning
-                        return $null
+                        $results += $null
                     }
                     "Sites" {
                         Write-Log "Error retrieving Site Info: $($_.Exception.Message)" -Level Warning
-                        return $null
+                        $results += $null
                     }
                     "Trusts" {
                         Write-Log "Error retrieving Trust Info: $($_.Exception.Message)" -Level Warning
-                        return $null
+                        $results += $null
                     }
                     "Policies" {
                         Write-Log "Error retrieving GPOs: $($_.Exception.Message)" -Level Warning
-                        return $null
+                        $results += $null
                     }
                     "OrganizationalUnits" {
                         Write-Log "Error retrieving Organizational Units: $($_.Exception.Message)" -Level Warning
-                        return $null
+                        $results += $null
                     }
                     "DomainInfo" {
                         Write-Log "Error retrieving Domain Info: $($_.Exception.Message)" -Level Warning
-                        return $null
+                        $results += $null
                     }
                     "DomainControllers" {
                         Write-Log "Error retrieving Domain Controllers: $($_.Exception.Message)" -Level Warning
-                        return $null
+                        $results += $null
                     }
                     default {
                         Write-Log "Unhandled ObjectType: $ObjectType" -Level Warning
-                        return $null
+                        $results += $null
                     }
                 }
             }
-        } -End {
-            Show-Progress -Activity $ActivityName -Completed
         }
+
+        # Finalize progress using Show-ProgressHelper
+        Show-ProgressHelper -Activity $ActivityName -Completed
 
         Write-Log "Successfully retrieved $($results.Count) $ObjectType." -Level Info
         return $results
@@ -193,5 +223,3 @@ function Invoke-ADRetrievalWithProgress {
         Write-Log "Failed to retrieve ${ObjectType}: $($_.Exception.Message)" -Level Error
     }
 }
-
-#endregion
