@@ -1,8 +1,10 @@
+#region Invoke-ADRetrievalWithProgress.ps1
+
 function Invoke-ADRetrievalWithProgress {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [ValidateSet("Users", "Computers", "Groups", "ForestInfo", "Sites", "Trusts", "Policies")]
+        [ValidateSet("Users", "Computers", "Groups", "ForestInfo", "Sites", "Trusts", "Policies", "OrganizationalUnits", "DomainInfo", "DomainControllers")]
         [string]$ObjectType,
 
         [Parameter()]
@@ -32,6 +34,9 @@ function Invoke-ADRetrievalWithProgress {
             "Sites" { "Get-ADReplicationSite" }
             "Trusts" { "Get-ADTrust" }
             "Policies" { "Get-GPO" }
+            "OrganizationalUnits" { "Get-ADOrganizationalUnit" }
+            "DomainInfo" { "Get-ADDomain" }
+            "DomainControllers" { "Get-ADDomainController" }
             default { throw "Unsupported ObjectType: $ObjectType" }
         }
 
@@ -40,14 +45,9 @@ function Invoke-ADRetrievalWithProgress {
         $countParams = @{ Filter = $Filter }
         if ($Credential) { $countParams.Credential = $Credential }
 
-        # Handle single-object cmdlets like Get-ADForest and Get-GPO (Policies)
-        if ($ObjectType -in @("ForestInfo", "Policies")) {
-            if ($ObjectType -eq "Policies") {
-                $total = (& $cmdletName @countParams | Measure-Object).Count
-            }
-            else {
-                $total = 1
-            }
+        # Handle single-object cmdlets like Get-ADForest, Get-GPO, Get-ADDomain
+        if ($ObjectType -in @("ForestInfo", "Policies", "DomainInfo")) {
+            $total = 1
         }
         else {
             $total = (& $cmdletName @countParams | Measure-Object).Count
@@ -164,6 +164,18 @@ function Invoke-ADRetrievalWithProgress {
                         Write-Log "Error retrieving GPOs: $($_.Exception.Message)" -Level Warning
                         return $null
                     }
+                    "OrganizationalUnits" {
+                        Write-Log "Error retrieving Organizational Units: $($_.Exception.Message)" -Level Warning
+                        return $null
+                    }
+                    "DomainInfo" {
+                        Write-Log "Error retrieving Domain Info: $($_.Exception.Message)" -Level Warning
+                        return $null
+                    }
+                    "DomainControllers" {
+                        Write-Log "Error retrieving Domain Controllers: $($_.Exception.Message)" -Level Warning
+                        return $null
+                    }
                     default {
                         Write-Log "Unhandled ObjectType: $ObjectType" -Level Warning
                         return $null
@@ -178,6 +190,8 @@ function Invoke-ADRetrievalWithProgress {
         return $results
     }
     catch {
-        Write-Log "Failed retrieved $($results.Count) $ObjectType." -Level Info
+        Write-Log "Failed to retrieve ${ObjectType}: $($_.Exception.Message)" -Level Error
     }
 }
+
+#endregion

@@ -79,40 +79,38 @@ function Get-DomainReport {
             }
         }
 
+        # At this point, $adminCreds is guaranteed to be set to either AD Admin or OU Admin credentials
+        # Therefore, we can remove conditionals checking for its existence
+
         # Prepare the list of functions to call based on admin rights
         $componentFunctions = @{}
 
         # Always get DomainInfo
         $componentFunctions['DomainInfo'] = {
-            if ($adminCreds) {
-                Get-ADDomainInfo -Credential $adminCreds
-            }
-            else {
-                Get-ADDomainInfo
-            }
+            Get-ADDomainInfo -Credential $adminCreds
         }
 
         if ($adminRights.IsADAdmin) {
             Write-Log "AD Admin rights confirmed - collecting all data" -Level Info
             # Full access components
             $componentFunctions += @{
-                'ForestInfo'     = { if ($adminCreds) { Get-ADForestInfo -Credential $adminCreds } else { Get-ADForestInfo } }
-                'TrustInfo'      = { if ($adminCreds) { Get-ADTrustInfo -Credential $adminCreds } else { Get-ADTrustInfo } }
-                'Sites'          = { if ($adminCreds) { Get-ADSiteInfo -Credential $adminCreds } else { Get-ADSiteInfo } }
-                'Users'          = { if ($adminCreds) { Get-ADUsers -IncludeDisabled -Credential $adminCreds } else { Get-ADUsers -IncludeDisabled } }
-                'Computers'      = { if ($adminCreds) { Get-ADComputers -Credential $adminCreds } else { Get-ADComputers } }
-                'Groups'         = { if ($adminCreds) { Get-ADGroupsAndMembers -Credential $adminCreds } else { Get-ADGroupsAndMembers } }
-                'PolicyInfo'     = { if ($adminCreds) { Get-ADPolicyInfo -Credential $adminCreds } else { Get-ADPolicyInfo } }
-                'SecurityConfig' = { if ($adminCreds) { Get-ADSecurityConfiguration -Credential $adminCreds } else { Get-ADSecurityConfiguration } }
+                'ForestInfo'     = { Get-ADForestInfo -Credential $adminCreds }
+                'TrustInfo'      = { Get-ADTrustInfo -Credential $adminCreds }
+                'Sites'          = { Get-ADSiteInfo -Credential $adminCreds }
+                'Users'          = { Get-ADUsers -IncludeDisabled -Credential $adminCreds }
+                'Computers'      = { Get-ADComputers -Credential $adminCreds }
+                'Groups'         = { Get-ADGroupsAndMembers -Credential $adminCreds }
+                'PolicyInfo'     = { Get-ADPolicyInfo -Credential $adminCreds }
+                'SecurityConfig' = { Get-ADSecurityConfiguration -Credential $adminCreds }
             }
         }
         elseif ($adminRights.IsOUAdmin) {
             Write-Log "OU Admin rights detected - collecting limited data" -Level Info
             # Limited access components
             $componentFunctions += @{
-                'Users'     = { if ($adminCreds) { Get-ADUsers -IncludeDisabled -Credential $adminCreds } else { Get-ADUsers -IncludeDisabled } }
-                'Computers' = { if ($adminCreds) { Get-ADComputers -Credential $adminCreds } else { Get-ADComputers } }
-                'Groups'    = { if ($adminCreds) { Get-ADGroupsAndMembers -Credential $adminCreds } else { Get-ADGroupsAndMembers } }
+                'Users'     = { Get-ADUsers -IncludeDisabled -Credential $adminCreds }
+                'Computers' = { Get-ADComputers -Credential $adminCreds }
+                'Groups'    = { Get-ADGroupsAndMembers -Credential $adminCreds }
             }
         }
 
@@ -134,8 +132,7 @@ function Get-DomainReport {
                 $errors[$component] = $_.Exception.Message
                 $componentTiming[$component] = Convert-MillisecondsToReadable -Milliseconds $componentSw.ElapsedMilliseconds
                 Write-Log "Error collecting ${component}: $($_.Exception.Message)" -Level Error
-                # Decide whether to continue on error or throw
-                # For example, to continue:
+                # Continue collecting other components despite errors
                 continue
             }
         }

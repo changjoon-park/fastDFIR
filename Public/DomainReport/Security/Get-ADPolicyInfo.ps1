@@ -1,88 +1,18 @@
 function Get-GPPermissions {
-    <#
-    .SYNOPSIS
-    Retrieves the permissions of a specified Group Policy Object (GPO).
-
-    .DESCRIPTION
-    The Get-GPPermissions function fetches the permissions associated with a given GPO identified by its GUID. It returns details about trustees, their permissions, inheritance status, and delegation types.
-
-    .PARAMETER Guid
-    The unique identifier (GUID) of the GPO whose permissions are to be retrieved.
-
-    .PARAMETER All
-    A switch indicating whether to retrieve all permissions or a subset.
-
-    .PARAMETER Credential
-    PSCredential object representing the user account with sufficient privileges to access the GPO permissions.
-
-    .EXAMPLE
-    Get-GPPermissions -Guid '12345678-90ab-cdef-1234-567890abcdef' -All
-
-    .EXAMPLE
-    $cred = Get-Credential
-    Get-GPPermissions -Guid '12345678-90ab-cdef-1234-567890abcdef' -All -Credential $cred
-    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [Guid]$Guid,
-
-        [Parameter()]
-        [switch]$All,
-
-        [Parameter()]
-        [System.Management.Automation.PSCredential]$Credential
+        [Guid]$Guid
     )
     
     process {
         try {
             Write-Log "Retrieving permissions for GPO with GUID: $Guid" -Level Info
 
-            # Define the scriptblock to execute in the PSSession
-            $scriptBlock = {
-                param($GpoGuid, $RetrieveAll)
+            # Import the GroupPolicy module
+            Import-Module GroupPolicy -ErrorAction Stop
 
-                # Import the GroupPolicy module
-                Import-Module GroupPolicy -ErrorAction Stop
-
-                # Retrieve GPPermissions
-                if ($RetrieveAll) {
-                    Get-GPPermission -Guid $GpoGuid -All | Select-Object Trustee, Permission, Inherited, DelegationType
-                }
-                else {
-                    Get-GPPermission -Guid $GpoGuid | Select-Object Trustee, Permission, Inherited, DelegationType
-                }
-            }
-
-            if ($Credential) {
-                try {
-                    # Establish a new PSSession on the local computer with the provided credentials
-                    $session = New-PSSession -ComputerName localhost -Credential $Credential -ErrorAction Stop
-            
-                    # Execute the scriptblock within the PSSession
-                    $permissions = Invoke-Command -Session $session -ScriptBlock $scriptBlock -ArgumentList $Guid, $All.IsPresent -ErrorAction Stop
-                }
-                catch {
-                    Write-Log "Failed to retrieve GPO permissions for GUID $Guid with provided credentials: $($_.Exception.Message)" -Level Error
-                    return @()
-                }
-                finally {
-                    # Ensure the session is removed even if an error occurs
-                    if ($session) {
-                        Remove-PSSession -Session $session -ErrorAction SilentlyContinue
-                    }
-                }
-            }
-            else {
-                try {
-                    # Execute the scriptblock locally without credentials
-                    $permissions = & $scriptBlock $Guid $All.IsPresent
-                }
-                catch {
-                    Write-Log "Failed to retrieve GPO permissions for GUID ${Guid}: $($_.Exception.Message)" -Level Error
-                    return @()
-                }
-            }
+            $permissions = Get-GPPermission -Guid $Guid -All             
 
             if (-not $permissions) {
                 Write-Log "No permissions found for GPO with GUID: $Guid" -Level Warning
@@ -92,12 +22,16 @@ function Get-GPPermissions {
             # Process and format the permissions into custom objects
             $processedPermissions = $permissions | ForEach-Object {
                 [PSCustomObject]@{
-                    Trustee        = $_.Trustee.Name
-                    Permission     = $_.Permission
-                    Inherited      = $_.Inherited
-                    DelegationType = $_.DelegationType
+                    Trustee     = $_.Trustee
+                    TrusteeType = $_.TrusteeType
+                    Permission  = $_.Permission
+                    Inherited   = $_.Inherited
                 }
             }
+
+            Add-Member -InputObject $processedPermissions -MemberType ScriptMethod -Name "ToString" -Value {
+                "Trustee: $($this.Trustee), Permission: $($this.Permission)"
+            } -Force
 
             Write-Log "Successfully retrieved permissions for GPO with GUID: $Guid" -Level Info
             return $processedPermissions
@@ -109,6 +43,7 @@ function Get-GPPermissions {
     }
 }
 
+#endregion
 function Get-GPOLinks {
     [CmdletBinding()]
     param (
@@ -147,6 +82,7 @@ function Get-GPOLinks {
         return @()
     }
 }
+
 function Get-ADPolicyInfo {
     [CmdletBinding()]
     param(
@@ -213,7 +149,7 @@ function Get-ADPolicyInfo {
             }
 
             # Extract GPO Permissions using Get-GPPermissions
-            $gpoPermissions = Get-GPPermissions -Guid $gpo.Id -All -Credential $Credential
+            $gpoPermissions = Get-GPPermissions -Guid $gpo.Id
 
             # Extract Scripts Configuration
             $scriptPolicies = $xmlReport.SelectNodes("//Scripts") | ForEach-Object {
