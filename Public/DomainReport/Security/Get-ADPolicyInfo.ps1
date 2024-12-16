@@ -1,7 +1,119 @@
+function Get-GPPermissions {
+    <#
+    .SYNOPSIS
+    Retrieves the permissions of a specified Group Policy Object (GPO).
+
+    .DESCRIPTION
+    The Get-GPPermissions function fetches the permissions associated with a given GPO identified by its GUID. It returns details about trustees, their permissions, inheritance status, and delegation types.
+
+    .PARAMETER Guid
+    The unique identifier (GUID) of the GPO whose permissions are to be retrieved.
+
+    .PARAMETER All
+    A switch indicating whether to retrieve all permissions or a subset.
+
+    .PARAMETER Credential
+    PSCredential object representing the user account with sufficient privileges to access the GPO permissions.
+
+    .EXAMPLE
+    Get-GPPermissions -Guid '12345678-90ab-cdef-1234-567890abcdef' -All
+
+    .EXAMPLE
+    $cred = Get-Credential
+    Get-GPPermissions -Guid '12345678-90ab-cdef-1234-567890abcdef' -All -Credential $cred
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [Guid]$Guid,
+
+        [Parameter()]
+        [switch]$All,
+
+        [Parameter()]
+        [System.Management.Automation.PSCredential]$Credential
+    )
+    
+    process {
+        try {
+            Write-Log "Retrieving permissions for GPO with GUID: $Guid" -Level Info
+
+            # Define the scriptblock to execute in the PSSession
+            $scriptBlock = {
+                param($GpoGuid, $RetrieveAll)
+
+                # Import the GroupPolicy module
+                Import-Module GroupPolicy -ErrorAction Stop
+
+                # Retrieve GPPermissions
+                if ($RetrieveAll) {
+                    Get-GPPermission -Guid $GpoGuid -All | Select-Object Trustee, Permission, Inherited, DelegationType
+                }
+                else {
+                    Get-GPPermission -Guid $GpoGuid | Select-Object Trustee, Permission, Inherited, DelegationType
+                }
+            }
+
+            if ($Credential) {
+                try {
+                    # Establish a new PSSession on the local computer with the provided credentials
+                    $session = New-PSSession -ComputerName localhost -Credential $Credential -ErrorAction Stop
+            
+                    # Execute the scriptblock within the PSSession
+                    $permissions = Invoke-Command -Session $session -ScriptBlock $scriptBlock -ArgumentList $Guid, $All.IsPresent -ErrorAction Stop
+                }
+                catch {
+                    Write-Log "Failed to retrieve GPO permissions for GUID $Guid with provided credentials: $($_.Exception.Message)" -Level Error
+                    return @()
+                }
+                finally {
+                    # Ensure the session is removed even if an error occurs
+                    if ($session) {
+                        Remove-PSSession -Session $session -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+            else {
+                try {
+                    # Execute the scriptblock locally without credentials
+                    $permissions = & $scriptBlock $Guid $All.IsPresent
+                }
+                catch {
+                    Write-Log "Failed to retrieve GPO permissions for GUID ${Guid}: $($_.Exception.Message)" -Level Error
+                    return @()
+                }
+            }
+
+            if (-not $permissions) {
+                Write-Log "No permissions found for GPO with GUID: $Guid" -Level Warning
+                return @()
+            }
+
+            # Process and format the permissions into custom objects
+            $processedPermissions = $permissions | ForEach-Object {
+                [PSCustomObject]@{
+                    Trustee        = $_.Trustee.Name
+                    Permission     = $_.Permission
+                    Inherited      = $_.Inherited
+                    DelegationType = $_.DelegationType
+                }
+            }
+
+            Write-Log "Successfully retrieved permissions for GPO with GUID: $Guid" -Level Info
+            return $processedPermissions
+        }
+        catch {
+            Write-Log "Error retrieving GPO permissions for GUID ${Guid}: $($_.Exception.Message)" -Level Error
+            return @()
+        }
+    }
+}
+
 function Get-GPOLinks {
+    [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
-        $GPO,
+        [Microsoft.GroupPolicy.GPO]$GPO,
 
         [Parameter(Mandatory)]
         [xml]$XmlReport
@@ -11,7 +123,7 @@ function Get-GPOLinks {
         # Links are usually found under <GPO><LinksTo> in the XML report
         $linksNode = $XmlReport.GPO.LinksTo
         if ($linksNode -and $linksNode.Link) {
-            $linksNode.Link | ForEach-Object {
+            return $linksNode.Link | ForEach-Object {
                 [PSCustomObject]@{
                     Location   = $_.SOMPath
                     Enabled    = $_.Enabled
@@ -25,33 +137,50 @@ function Get-GPOLinks {
                 }
             }
         }
+        else {
+            Write-Log "No links found for GPO: $($GPO.DisplayName)" -Level Warning
+            return @()
+        }
     }
     catch {
         Write-Log "Error getting GPO links for $($GPO.DisplayName): $($_.Exception.Message)" -Level Warning
-        return $null
+        return @()
     }
 }
-
 function Get-ADPolicyInfo {
+    [CmdletBinding()]
+    param(
+        [System.Management.Automation.PSCredential]$Credential
+    )
+
     try {
-        Write-Log "Retrieving AD Group Policy Object information..." -Level Info
-        Show-ProgressHelper -Activity "AD Inventory" -Status "Initializing policy retrieval..."
+        Write-Log "Retrieving AD Group Policy Object (GPO) information..." -Level Info
 
-        # Get all GPOs
-        $gpos = Get-GPO -All | ForEach-Object {
-            $gpo = $_
-            Show-ProgressHelper -Activity "Processing GPOs" -Status "Processing $($gpo.DisplayName)"
+        # Define the filter and properties for GPOs
+        $filter = '*'  # Retrieve all GPOs; modify if needed
+        $properties = @(
+            'DisplayName',
+            'Id',
+            'DomainName',
+            'CreationTime',
+            'ModificationTime',
+            'GpoStatus',
+            'WmiFilter'  # Assuming WmiFilter is a property; adjust if necessary
+        )
 
-            # Retrieve GPO Report Once
-            $report = Get-GPOReport -Guid $gpo.Id -ReportType XML
-            [xml]$xmlReport = $report
+        # Define the processing script for each GPO
+        $processingScript = {
+            param($gpo)
 
-            # Get GPO links using the pre-fetched XML
+            # Generate the XML report for the GPO
+            $reportXml = Get-GPOReport -Guid $gpo.Id -ReportType XML -ErrorAction Stop
+            [xml]$xmlReport = $reportXml
+
+            # Extract GPO links using the Get-GPOLinks function
             $gpoLinks = Get-GPOLinks -GPO $gpo -XmlReport $xmlReport
 
-            # Extract password policy settings inline
-            $passwordPolicies = $xmlReport.SelectNodes("//SecurityOptions/SecurityOption[contains(Name, 'Password')]")
-            $passwordPolicy = $passwordPolicies | ForEach-Object {
+            # Extract Password Policy Settings
+            $passwordPolicies = $xmlReport.SelectNodes("//SecurityOptions/SecurityOption[contains(Name, 'Password')]") | ForEach-Object {
                 [PSCustomObject]@{
                     Setting = $_.Name
                     State   = $_.State
@@ -59,9 +188,8 @@ function Get-ADPolicyInfo {
                 }
             }
 
-            # Extract audit policy settings inline
-            $auditPolicies = $xmlReport.SelectNodes("//AuditSetting")
-            $auditPolicy = $auditPolicies | ForEach-Object {
+            # Extract Audit Policy Settings
+            $auditPolicies = $xmlReport.SelectNodes("//AuditSetting") | ForEach-Object {
                 [PSCustomObject]@{
                     Category     = $_.SubcategoryName
                     AuditSuccess = [bool]($_.SettingValue -band 1)
@@ -69,7 +197,7 @@ function Get-ADPolicyInfo {
                 }
             }
 
-            # Get WMI Filters
+            # Extract WMI Filters
             $wmiFilters = if ($gpo.WmiFilter) {
                 [PSCustomObject]@{
                     Name             = $gpo.WmiFilter.Name
@@ -80,18 +208,14 @@ function Get-ADPolicyInfo {
                     LastModifiedTime = $gpo.WmiFilter.LastModifiedTime
                 }
             }
-
-            # Get GPO Permissions (assuming Get-GPPermissions is defined elsewhere)
-            $gpoPermissions = Get-GPPermissions -Guid $gpo.Id -All | ForEach-Object {
-                [PSCustomObject]@{
-                    Trustee        = $_.Trustee.Name
-                    Permission     = $_.Permission
-                    Inherited      = $_.Inherited
-                    DelegationType = $_.TrusteeType
-                }
+            else {
+                $null
             }
 
-            # Get Scripts Configuration
+            # Extract GPO Permissions using Get-GPPermissions
+            $gpoPermissions = Get-GPPermissions -Guid $gpo.Id -All -Credential $Credential
+
+            # Extract Scripts Configuration
             $scriptPolicies = $xmlReport.SelectNodes("//Scripts") | ForEach-Object {
                 # Ensure the script path is valid before hashing
                 $hashValue = $null
@@ -108,7 +232,7 @@ function Get-ADPolicyInfo {
                 }
             }
 
-            # Get Registry Settings
+            # Extract Registry Settings
             $registrySettings = $xmlReport.SelectNodes("//RegistrySettings/Registry") | ForEach-Object {
                 [PSCustomObject]@{
                     KeyPath   = $_.KeyPath
@@ -119,7 +243,7 @@ function Get-ADPolicyInfo {
                 }
             }
 
-            # Get File System Changes
+            # Extract File System Changes
             $fileOperations = $xmlReport.SelectNodes("//FileSecurity") | ForEach-Object {
                 [PSCustomObject]@{
                     Path               = $_.Path
@@ -130,7 +254,7 @@ function Get-ADPolicyInfo {
                 }
             }
 
-            # Get Service Configurations
+            # Extract Service Configurations
             $serviceSettings = $xmlReport.SelectNodes("//NTServices/NTService") | ForEach-Object {
                 [PSCustomObject]@{
                     ServiceName        = $_.Name
@@ -140,7 +264,7 @@ function Get-ADPolicyInfo {
                 }
             }
 
-            # Get Administrative Template Settings
+            # Extract Administrative Template Settings
             $adminTemplates = $xmlReport.SelectNodes("//AdminTemplatePolicies/Policy") | ForEach-Object {
                 [PSCustomObject]@{
                     Name       = $_.Name
@@ -151,7 +275,7 @@ function Get-ADPolicyInfo {
                 }
             }
 
-            # Get Software Installation Settings
+            # Extract Software Installation Settings
             $softwareInstallation = $xmlReport.SelectNodes("//SoftwareInstallation/Package") | ForEach-Object {
                 [PSCustomObject]@{
                     Name           = $_.Name
@@ -162,7 +286,7 @@ function Get-ADPolicyInfo {
                 }
             }
 
-            # Get Network Settings (Drive Mappings)
+            # Extract Network Settings (Drive Mappings)
             $networkSettings = $xmlReport.SelectNodes("//DriveMapSettings/DriveMap") | ForEach-Object {
                 [PSCustomObject]@{
                     DriveLetter = $_.DriveLetter
@@ -177,6 +301,7 @@ function Get-ADPolicyInfo {
             $computerEnabled = ($gpo.GpoStatus -ne [Microsoft.GroupPolicy.GpoStatus]"ComputerSettingsDisabled" -and $gpo.GpoStatus -ne [Microsoft.GroupPolicy.GpoStatus]"AllSettingsDisabled")
             $userEnabled = ($gpo.GpoStatus -ne [Microsoft.GroupPolicy.GpoStatus]"UserSettingsDisabled" -and $gpo.GpoStatus -ne [Microsoft.GroupPolicy.GpoStatus]"AllSettingsDisabled")
 
+            # Construct the GPO object with all retrieved information
             [PSCustomObject]@{
                 Name                 = $gpo.DisplayName
                 ID                   = $gpo.Id
@@ -185,8 +310,8 @@ function Get-ADPolicyInfo {
                 ModificationTime     = $gpo.ModificationTime
                 Status               = $gpo.GpoStatus
                 Links                = $gpoLinks
-                PasswordPolicies     = $passwordPolicy
-                AuditPolicies        = $auditPolicy
+                PasswordPolicies     = $passwordPolicies
+                AuditPolicies        = $auditPolicies
                 ComputerEnabled      = $computerEnabled
                 UserEnabled          = $userEnabled
                 WMIFilters           = $wmiFilters
@@ -201,8 +326,16 @@ function Get-ADPolicyInfo {
             }
         }
 
-        # Get account lockout policies
-        $lockoutPolicies = Get-ADDefaultDomainPasswordPolicy | ForEach-Object {
+        # Invoke the helper function to retrieve and process GPOs
+        $gpoInfo = Invoke-ADRetrievalWithProgress -ObjectType "Policies" `
+            -Filter $filter `
+            -Properties $properties `
+            -Credential $Credential `
+            -ProcessingScript $processingScript `
+            -ActivityName "Retrieving GPOs"
+
+        # Extract Account Lockout Policies
+        $lockoutPolicies = Get-ADDefaultDomainPasswordPolicy -Credential $Credential | ForEach-Object {
             [PSCustomObject]@{
                 LockoutDuration          = $_.LockoutDuration
                 LockoutObservationWindow = $_.LockoutObservationWindow
@@ -215,8 +348,8 @@ function Get-ADPolicyInfo {
             }
         }
 
-        # Get Fine-Grained Password Policies
-        $fgppPolicies = Get-ADFineGrainedPasswordPolicy -Filter * | ForEach-Object {
+        # Extract Fine-Grained Password Policies
+        $fgppPolicies = Get-ADFineGrainedPasswordPolicy -Filter * -Credential $Credential | ForEach-Object {
             [PSCustomObject]@{
                 Name                 = $_.Name
                 Precedence           = $_.Precedence
@@ -231,8 +364,9 @@ function Get-ADPolicyInfo {
             }
         }
 
+        # Compile the Policy Information Object
         $policyInfo = [PSCustomObject]@{
-            GroupPolicies               = $gpos
+            GroupPolicies               = $gpoInfo
             DefaultLockoutPolicy        = $lockoutPolicies
             FineGrainedPasswordPolicies = $fgppPolicies
         }
@@ -240,7 +374,7 @@ function Get-ADPolicyInfo {
         # Add a ToString method for better output
         Add-Member -InputObject $policyInfo -MemberType ScriptMethod -Name "ToString" -Value {
             "GPOs: $($this.GroupPolicies.Count), Default Policies: $($this.DefaultLockoutPolicy.Count), FGPP: $($this.FineGrainedPasswordPolicies.Count)"
-        }
+        } -Force 
 
         return $policyInfo
     }
